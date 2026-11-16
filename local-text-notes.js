@@ -1,4 +1,4 @@
-/* Local Text Notes. Load as a classic script with defer. */
+/* Zero Notes. Load as a classic script with defer. */
 (() => {
   "use strict";
 

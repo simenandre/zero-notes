@@ -35,7 +35,7 @@ async function start() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const site = siteFor(tab?.url);
   if (!site) {
-    status.textContent = "Local Text Notes can be enabled on regular web pages and local HTML files.";
+    status.textContent = "Zero Notes can be enabled on regular web pages and local HTML files.";
     return;
   }
 

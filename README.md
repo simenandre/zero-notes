@@ -4,6 +4,8 @@ Highlight text and leave comments. Notes stay in your browser.
 
 [Try the live demo](https://madsolame.com/zero-notes/)
 
+[Privacy policy](privacy.html) · [MIT License](LICENSE)
+
 ![Highlighting a passage and opening a comment thread in the sidebar](assets/demo.gif)
 
 ## Chrome extension
@@ -41,7 +43,3 @@ Copy `local-text-notes.js` next to your HTML file and add:
 
 Select text to highlight or comment. Choose **Show notes** to see highlights and expand comment threads beside the page.
 Use the copy button in the notes header to copy every note on the page as Markdown.
-
-## Publishing
-
-See [docs/publishing.md](docs/publishing.md) for store setup and the release workflow.

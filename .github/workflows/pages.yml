@@ -6,6 +6,7 @@ on:
     paths:
       - demo.html
       - privacy.html
+      - LICENSE
       - local-text-notes.js
       - chrome-extension/icons/icon-48.png
       - .github/workflows/pages.yml
@@ -33,7 +34,7 @@ jobs:
         run: |
           mkdir -p _site/chrome-extension/icons
           cp demo.html _site/index.html
-          cp privacy.html local-text-notes.js _site/
+          cp privacy.html LICENSE local-text-notes.js _site/
           cp chrome-extension/icons/icon-48.png _site/chrome-extension/icons/
       - uses: actions/upload-pages-artifact@v4
         with:

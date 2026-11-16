@@ -83,7 +83,7 @@ async function restoreRegistration(activateOpenTabs) {
 }
 
 function reconcile(activateOpenTabs) {
-  void serialize(() => restoreRegistration(activateOpenTabs)).catch(error => console.error("Local Text Notes:", error));
+  void serialize(() => restoreRegistration(activateOpenTabs)).catch(error => console.error("Zero Notes:", error));
 }
 
 chrome.runtime.onInstalled.addListener(() => reconcile(true));
@@ -105,7 +105,7 @@ async function changeSite(message) {
     } finally {
       if (!remaining.some(id => siteFor(id).pattern === site.pattern)) {
         await chrome.permissions.remove({ origins: [site.pattern] }).catch(error => {
-          console.warn("Local Text Notes could not release site access:", error.message);
+          console.warn("Zero Notes could not release site access:", error.message);
         });
       }
     }
@@ -131,7 +131,7 @@ async function writeNotes(message, sender) {
   const url = pageUrl(message.url);
   if (!site || !url || sender.frameId !== 0 || siteFor(url)?.id !== site.id
     || !(await enabledSites()).includes(site.id)) {
-    throw new Error("Local Text Notes is disabled here.");
+    throw new Error("Zero Notes is disabled here.");
   }
   if (!Number.isSafeInteger(message.revision) || !Array.isArray(message.notes)) {
     throw new Error("Invalid notes update.");

@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Local Text Notes",
+  "name": "Zero Notes",
   "version": "1.0.0",
   "minimum_chrome_version": "105",
   "description": "Highlight text and leave local comments on the sites you enable.",
@@ -14,7 +14,7 @@
   "optional_permissions": ["nativeMessaging"],
   "optional_host_permissions": ["https://*/*", "http://*/*", "file:///*"],
   "action": {
-    "default_title": "Local Text Notes",
+    "default_title": "Zero Notes",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon-16.png",
