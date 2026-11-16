@@ -294,6 +294,7 @@
     reopen: "M5.3 7a2.8 2.8 0 1 1 .6 3.2m-.6-5v2h2",
     delete: "m6 6 4 4m0-4-4 4",
     jump: "M9 3.5h3.5V7m0-3.5-6 6m5.5-.5v3.5H3.5V4H7",
+    copy: "M5.5 5.5h7v7h-7zm5-2v-1h-8v8h1",
     link: "m6.5 9.5 3-3M6 6 3.5 8.5a2.8 2.8 0 0 0 4 4L10 10M6 6l2.5-2.5a2.8 2.8 0 0 1 4 4L10 10",
     trash: "M3 4.5h10m-6.5 0V3h3v1.5M4.5 5l.7 8h5.6l.7-8m-5 2.3v3.4m3-3.4v3.4"
   };
@@ -410,7 +411,8 @@
     const headingCount = element("span", "count");
     const header = element("header");
     const sidebarModes = modeSwitch();
-    header.append(logo(24), heading, headingCount, sidebarModes, iconButton("Hide notes", "close", close));
+    const copyAllButton = iconButton("Copy notes as Markdown", "copy", copyMarkdown);
+    header.append(logo(24), heading, headingCount, sidebarModes, copyAllButton, iconButton("Hide notes", "close", close));
     const notice = element("div");
     const railViewport = element("div", "rail-scroll");
     const track = element("div", "rail-track");
@@ -747,6 +749,40 @@
       }
     }
 
+    function markdown() {
+      const url = new URL(location.href);
+      url.hash = url.hash.split(":~:", 1)[0];
+      const lines = [`# ${document.title.trim() || url.href}`, "", url.href];
+      const ordered = [...notes].sort((a, b) => (attached.get(a.id)?.from ?? Infinity) - (attached.get(b.id)?.from ?? Infinity));
+      for (const note of ordered) {
+        lines.push("", `> ${note.anchor.exact}`);
+        if (note.comments.length) lines.push("");
+        for (const comment of note.comments) {
+          const body = comment.body.replace(/\n/gu, "\n  ");
+          lines.push(`- ${comment.resolved ? "~~" + body + "~~" : body}`);
+        }
+      }
+      return lines.join("\n") + "\n";
+    }
+
+    async function copyMarkdown() {
+      const text = markdown();
+      try {
+        await navigator.clipboard.writeText(text);
+        announce("Notes copied as Markdown.");
+      } catch {
+        notice.querySelector(".copy-field")?.remove();
+        const field = element("textarea", "copy-field");
+        field.readOnly = true;
+        field.rows = 6;
+        field.value = text;
+        field.setAttribute("aria-label", "Notes as Markdown to copy");
+        notice.append(field);
+        field.focus();
+        field.select();
+      }
+    }
+
     async function postComment(event) {
       event.preventDefault();
       const active = view;
@@ -846,6 +882,7 @@
       if (!persistent) notice.append(element("p", "notice", "Changes last until you reload."));
       if (!canHighlight) notice.append(element("p", "notice", "This browser can save notes but can’t paint highlights."));
       headingCount.textContent = notes.length || "";
+      copyAllButton.hidden = !notes.length;
       if (target) {
         inlineRoot.append(noteCard(selected, true));
       } else {
