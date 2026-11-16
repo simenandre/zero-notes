@@ -6,7 +6,7 @@ Highlight text and leave comments. Notes stay in your browser.
 
 [Privacy policy](privacy.html) · [MIT License](LICENSE)
 
-![Highlighting a passage and opening a comment thread in the sidebar](assets/demo.gif)
+![Choosing yellow and green highlights and adding an underlined comment in Zero Notes](assets/demo.gif)
 
 ## Chrome extension
 

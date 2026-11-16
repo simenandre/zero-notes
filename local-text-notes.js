@@ -289,6 +289,7 @@
     close: "M4 4l8 8m0-8-8 8",
     chevron: "m6 3.5 4 4.5-4 4.5",
     comment: "M2.5 3.5h11v7H8l-3 2.5v-2.5H2.5z",
+    palette: "M8 2.5a5.5 5.5 0 0 0 0 11h1.1a1.3 1.3 0 0 0 .9-2.2 1 1 0 0 1 .7-1.8H12a1.5 1.5 0 0 0 1.5-1.5A5.5 5.5 0 0 0 8 2.5Zm-3 5h.1m1.5-2h.1m2.6-.2h.1m2 1.8h.1",
     resolve: "m5 8 2 2 4-4",
     reopen: "M5.3 7a2.8 2.8 0 1 1 .6 3.2m-.6-5v2h2",
     delete: "m6 6 4 4m0-4-4 4",
@@ -297,6 +298,23 @@
     trash: "M3 4.5h10m-6.5 0V3h3v1.5M4.5 5l.7 8h5.6l.7-8m-5 2.3v3.4m3-3.4v3.4"
   };
   const commentDate = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+  const initialSwatches = ["#f2c73e", "#80d6a3", "#7ebbf5", "#c7a0e8", "#f49891"];
+  const swatchKeys = initialSwatches.map((_, i) => `swatch-${i + 1}`);
+  const initialPalette = Object.fromEntries(swatchKeys.map((key, i) => [key, initialSwatches[i]]));
+
+  function hexColor(value) {
+    return typeof value === "string" && /^#[0-9a-f]{6}$/iu.test(value) ? value.toLowerCase() : undefined;
+  }
+
+  function savedSwatch(value) {
+    return value === null || (Number.isInteger(value) && value >= 0 && value < swatchKeys.length);
+  }
+
+  function withSwatch(note, swatch) {
+    const next = { ...note, swatch };
+    delete next.color;
+    return next;
+  }
 
   function icon(name) {
     const namespace = "http://www.w3.org/2000/svg";
@@ -329,6 +347,25 @@
     return control;
   }
 
+  function colorButton(label, color, action, key) {
+    const control = button("", action, "icon color-button", key);
+    control.setAttribute("aria-label", label);
+    control.title = label;
+    control.style.setProperty("--swatch", color);
+    control.append(element("span", "color-dot"));
+    return control;
+  }
+
+  function colorInput(label, color, onChange) {
+    const input = element("input", "color-input");
+    input.type = "color";
+    input.value = color;
+    input.setAttribute("aria-label", label);
+    input.title = label;
+    input.addEventListener("change", () => onChange(input.value));
+    return input;
+  }
+
   function logo(size) {
     const image = element("img", "logo");
     image.width = size;
@@ -348,10 +385,19 @@
   function pageStorage(key, signal) {
     const read = () => JSON.parse(localStorage.getItem(key) || "[]");
     const modeKey = "local-text-notes:mode";
+    const colorPrefix = "local-text-notes:color:";
     return {
       read,
       readMode: () => localStorage.getItem(modeKey),
       writeMode: mode => localStorage.setItem(modeKey, mode),
+      readPalette: keys => Object.fromEntries(keys.map(key => [key, localStorage.getItem(colorPrefix + key)])),
+      writePalettePreference: (key, value) => localStorage.setItem(colorPrefix + key, value),
+      resetPaletteSwatches: keys => keys.forEach(key => localStorage.removeItem(colorPrefix + key)),
+      subscribePalette(listener) {
+        window.addEventListener("storage", event => {
+          if (event.key === null || event.key.startsWith(colorPrefix)) listener();
+        }, { signal });
+      },
       update(transform) {
         const commit = () => {
           signal.throwIfAborted();
@@ -385,9 +431,12 @@
     const storage = extensionStorage || pageStorage(storageKey, signal);
     const canHighlight = Boolean(window.CSS?.highlights && window.Highlight);
     const prefix = extensionStorage ? "local-text-notes-extension" : "local-text-notes";
-    const markName = `${prefix}-mark`;
-    const commentName = `${prefix}-comment`;
-    const activeName = `${prefix}-active`;
+    const commentMark = `${prefix}-comment`;
+    const resolvedCommentMark = `${prefix}-resolved-comment`;
+    const pendingCommentMark = `${prefix}-pending-comment`;
+    const palette = { ...initialPalette };
+    const colorOverrides = new Map();
+    const registeredHighlights = new Set();
     const compact = matchMedia("(max-width: 760px)");
     const railAttribute = "data-local-text-notes-rail";
     const root = document.documentElement;
@@ -402,6 +451,11 @@
     const inline = element("local-text-notes-inline");
     const inlineRoot = inline.attachShadow({ mode: extensionStorage ? "closed" : "open" });
     const annotationLayer = element("div", "annotations");
+    const passageBrackets = [element("span", "passage-bracket"), element("span", "passage-bracket")];
+    for (const bracket of passageBrackets) {
+      bracket.hidden = true;
+      bracket.setAttribute("aria-hidden", "true");
+    }
     const panel = element("aside", "panel");
     panel.id = "notes-panel";
     panel.setAttribute("aria-labelledby", "notes-title");
@@ -413,13 +467,30 @@
     const headingCount = element("span", "count");
     const header = element("header");
     const sidebarModes = modeSwitch();
+    const paletteButton = iconButton("Highlight palette", "palette", togglePalette, "palette");
+    paletteButton.setAttribute("aria-controls", "highlight-palette");
+    paletteButton.setAttribute("aria-expanded", "false");
     const copyAllButton = iconButton("Copy notes as Markdown", "copy", copyMarkdown);
-    header.append(logo(24), heading, headingCount, sidebarModes, copyAllButton, iconButton("Hide notes", "close", close));
+    header.append(logo(24), heading, headingCount, sidebarModes, paletteButton, copyAllButton, iconButton("Hide notes", "close", close));
+    const palettePanel = element("div", "color-panel");
+    palettePanel.id = "highlight-palette";
+    palettePanel.hidden = true;
+    const swatchRow = element("div", "color-row");
+    const swatchLabel = element("div", "swatch-label", "Colors");
+    const resetSwatches = button("Reset", resetPaletteSwatches, "color-text-button", "reset-swatches");
+    resetSwatches.setAttribute("aria-label", "Reset swatch colors");
+    resetSwatches.title = "Restore the original swatch colors";
+    swatchLabel.append(resetSwatches);
+    const swatchInputs = swatchKeys.map((key, i) => colorInput(`Edit swatch ${i + 1}`, palette[key], color => setPalettePreference(key, color)));
+    const swatchGroup = element("div", "color-options");
+    swatchGroup.append(...swatchInputs);
+    swatchRow.append(swatchLabel, swatchGroup);
+    palettePanel.append(swatchRow);
     const notice = element("div");
     const railViewport = element("div", "rail-scroll");
     const track = element("div", "rail-track");
     railViewport.append(track);
-    panel.append(header, notice, railViewport);
+    panel.append(header, palettePanel, notice, railViewport);
     const indicators = element("nav", "indicators");
     indicators.setAttribute("aria-label", "Comment locations");
     indicators.hidden = true;
@@ -430,6 +501,8 @@
     toolbar.setAttribute("role", "group");
     toolbar.setAttribute("aria-label", "Mark up selected text");
     toolbar.hidden = true;
+    const toolbarSwatches = swatchKeys.map((key, i) =>
+      colorButton("", palette[key], () => saveHighlight(i), `highlight-${key}`));
     const status = element("div", "status");
     status.setAttribute("role", "status");
     status.hidden = true;
@@ -462,6 +535,12 @@
     let refreshTimer = 0;
     let statusTimer = 0;
     let selection = null;
+    let editingHighlight = null;
+    let paletteOpen = false;
+    let colorReadVersion = 0;
+    let legacyDefaultSwatch = 0;
+    let styledColors;
+    let activeRange;
     const resizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(queueLayout) : null;
 
     function modeSwitch() {
@@ -504,6 +583,75 @@
       }
     }
 
+    function togglePalette() {
+      paletteOpen = !paletteOpen;
+      render("palette");
+    }
+
+    function renderPalette() {
+      paletteButton.setAttribute("aria-expanded", String(paletteOpen));
+      palettePanel.hidden = !paletteOpen;
+      swatchInputs.forEach((input, i) => { input.value = palette[swatchKeys[i]]; });
+      toolbarSwatches.forEach((control, i) => {
+        const color = palette[swatchKeys[i]];
+        const label = `Highlight Color ${i + 1}`;
+        control.style.setProperty("--swatch", color);
+        control.setAttribute("aria-label", label);
+        control.title = label;
+      });
+      markToolbarColor();
+    }
+
+    function applyPalette() {
+      paintHighlights();
+      render();
+    }
+
+    async function refreshPalette() {
+      if (!storage.readPalette || signal.aborted) return;
+      const version = ++colorReadVersion;
+      try {
+        const saved = await storage.readPalette([...swatchKeys, "default"]);
+        if (signal.aborted || version !== colorReadVersion) return;
+        // Preserve the chosen slot for notes saved before the default setting was removed.
+        legacyDefaultSwatch = Math.max(0, swatchKeys.indexOf(saved.default));
+        const values = Object.fromEntries(swatchKeys.map(key => [key,
+          colorOverrides.get(key) ?? hexColor(saved[key]) ?? initialPalette[key]]));
+        if (swatchKeys.every(key => values[key] === palette[key])) return;
+        Object.assign(palette, values);
+        applyPalette();
+      } catch {
+        // Leave the current palette available when storage is blocked.
+      }
+    }
+
+    function setPalettePreference(key, value) {
+      const preference = hexColor(value);
+      if (!preference) return;
+      return updatePalette({ [key]: preference }, () => storage.writePalettePreference?.(key, preference));
+    }
+
+    function resetPaletteSwatches() {
+      const values = Object.fromEntries(swatchKeys.map(key => [key, initialPalette[key]]));
+      return updatePalette(values, () => storage.resetPaletteSwatches?.(swatchKeys));
+    }
+
+    async function updatePalette(values, write) {
+      if (signal.aborted) return;
+      try {
+        await write();
+        for (const key of Object.keys(values)) colorOverrides.delete(key);
+      } catch {
+        if (signal.aborted) return;
+        for (const [key, value] of Object.entries(values)) colorOverrides.set(key, value);
+        announce("Couldn’t save these palette changes beyond this tab.");
+      }
+      if (signal.aborted) return;
+      Object.assign(palette, values);
+      applyPalette();
+      void refreshPalette();
+    }
+
     function validNotes(stored) {
       if (!Array.isArray(stored)) throw new Error("Invalid notes");
       return stored.filter(note => typeof note?.id === "string"
@@ -513,6 +661,7 @@
     }
 
     async function refreshNotes() {
+      await paletteReady;
       if (!persistent || signal.aborted) return;
       if (busy) {
         refreshPending = true;
@@ -531,7 +680,10 @@
       }
       if (signal.aborted || version !== readVersion) return;
       notes = next;
-      paint();
+      const needsSwatch = note => !savedSwatch(note.swatch);
+      if (notes.some(needsSwatch)) {
+        if (!await change(items => items.map(note => needsSwatch(note) ? withSwatch(note, noteSwatch(note)) : note))) return;
+      } else paint();
       render();
     }
 
@@ -569,8 +721,6 @@
 
     function paint() {
       attached = new Map();
-      const marks = canHighlight ? new Highlight() : null;
-      const comments = canHighlight ? new Highlight() : null;
       if (notes.length) {
         index ??= indexText(scope, true);
         for (const note of notes) {
@@ -578,18 +728,82 @@
           if (!match) continue;
           const range = rangeFor(index, match);
           attached.set(note.id, { ...match, range });
-          const layer = note.comments.some(comment => !comment.resolved) ? comments : marks;
-          layer?.add(range);
         }
       }
-      if (canHighlight) {
-        comments.priority = 1;
-        CSS.highlights.set(markName, marks);
-        CSS.highlights.set(commentName, comments);
-      }
+      paintHighlights();
       orderedNotes = notesInPageOrder(notes);
       noteNumbers = new Map(orderedNotes.map((note, i) => [note.id, i + 1]));
       syncAnnotations();
+    }
+
+    function paintHighlights() {
+      if (!canHighlight) return;
+      const layers = new Map();
+      for (const note of notes) {
+        const range = attached.get(note.id)?.range;
+        if (!range) continue;
+        const threaded = note.comments.some(comment => !comment.resolved);
+        const color = noteColor(note);
+        const name = color ? highlightName(color, threaded ? "thread" : "mark")
+          : threaded ? commentMark : resolvedCommentMark;
+        if (!layers.has(name)) {
+          const layer = new Highlight();
+          layer.priority = threaded ? 1 : 0;
+          layers.set(name, layer);
+        }
+        layers.get(name).add(range);
+      }
+      updateHighlightStyles();
+      for (const name of registeredHighlights) if (!layers.has(name)) CSS.highlights.delete(name);
+      registeredHighlights.clear();
+      for (const [name, layer] of layers) {
+        CSS.highlights.set(name, layer);
+        registeredHighlights.add(name);
+      }
+    }
+
+    function noteSwatch(note) {
+      if (savedSwatch(note.swatch)) return note.swatch;
+      if (note.id === "new" || note.comments.length) return null;
+      if (note.swatch === "default") return legacyDefaultSwatch;
+      const color = hexColor(note.color);
+      if (!color) return legacyDefaultSwatch;
+      const current = swatchKeys.findIndex(key => palette[key] === color);
+      const index = current >= 0 ? current : initialSwatches.indexOf(color);
+      return index >= 0 ? index : legacyDefaultSwatch;
+    }
+
+    function noteColor(note) {
+      const swatch = noteSwatch(note);
+      return swatch === null ? undefined : palette[swatchKeys[swatch]];
+    }
+
+    function highlightName(color, kind) {
+      return `${prefix}-${kind}-${color.slice(1)}`;
+    }
+
+    function updateHighlightStyles() {
+      const colors = [...new Set(notes.map(noteColor).filter(Boolean))].sort();
+      const key = colors.join();
+      if (key === styledColors) return;
+      styledColors = key;
+      function rules(dark) {
+        const underline = dark ? "#e2b444" : "#b58a20";
+        const resolvedUnderline = dark ? "#918b79" : "#827969";
+        const comments = `
+          ::highlight(${commentMark}), ::highlight(${pendingCommentMark}) { text-decoration: underline ${underline}; }
+          ::highlight(${resolvedCommentMark}) { text-decoration: underline ${resolvedUnderline}; }
+        `;
+        return comments + colors.map(color => {
+          const base = dark && color === initialSwatches[0] ? "#efb833" : color;
+          const threadLine = color === initialSwatches[0] ? underline : color;
+          return `
+            ::highlight(${highlightName(color, "mark")}) { background-color: ${base}${dark ? "50" : "66"}; }
+            ::highlight(${highlightName(color, "thread")}) { background-color: ${base}${dark ? "66" : "80"}; text-decoration: underline ${threadLine}; }
+          `;
+        }).join("");
+      }
+      setHighlightStyles(`${rules(false)} @media (prefers-color-scheme: dark) { ${rules(true)} }`);
     }
 
     function announce(message) {
@@ -602,6 +816,37 @@
     function hideToolbar() {
       toolbar.hidden = true;
       selection = null;
+      editingHighlight = null;
+    }
+
+    function markToolbarColor() {
+      const note = editingHighlight && notes.find(note => note.id === editingHighlight);
+      const swatch = note ? noteSwatch(note) : null;
+      if (editingHighlight && (swatch === null || !attached.has(editingHighlight))) hideToolbar();
+      toolbar.setAttribute("aria-label", editingHighlight ? "Edit highlight" : "Mark up selected text");
+      toolbarSwatches.forEach((control, i) => {
+        if (editingHighlight) control.setAttribute("aria-pressed", String(i === swatch));
+        else control.removeAttribute("aria-pressed");
+      });
+    }
+
+    function placeToolbar(box, above = box.top, center = (box.left + box.right) / 2) {
+      toolbar.hidden = false;
+      const width = root.clientWidth;
+      const height = innerHeight;
+      const left = Math.min(width - toolbar.offsetWidth - 8, center - toolbar.offsetWidth / 2);
+      const below = box.bottom + 8;
+      const top = below + toolbar.offsetHeight < height - 8 ? below : Math.max(8, above - toolbar.offsetHeight - 8);
+      toolbar.style.left = `${Math.max(8, left)}px`;
+      toolbar.style.top = `${top}px`;
+    }
+
+    function editHighlight(note, box, x) {
+      selection = null;
+      editingHighlight = note.id;
+      markToolbarColor();
+      placeToolbar(box, box.top, x);
+      toolbarSwatches[noteSwatch(note)]?.focus({ preventScroll: true });
     }
 
     function updateToolbar() {
@@ -610,7 +855,7 @@
         selectionFrame = 0;
         const current = document.getSelection();
         if (selecting || !current?.rangeCount || current.isCollapsed || !current.toString().trim()) {
-          hideToolbar();
+          if (!editingHighlight) hideToolbar();
           return;
         }
         const range = current.getRangeAt(0);
@@ -629,13 +874,9 @@
           return;
         }
         selection = range.cloneRange();
-        toolbar.hidden = false;
-        const box = visible.at(-1);
-        const left = Math.min(width - toolbar.offsetWidth - 8, Math.max(8, (box.left + box.right - toolbar.offsetWidth) / 2));
-        const below = box.bottom + 8;
-        const top = below + toolbar.offsetHeight < height - 8 ? below : Math.max(8, visible[0].top - toolbar.offsetHeight - 8);
-        toolbar.style.left = `${Math.max(8, left)}px`;
-        toolbar.style.top = `${top}px`;
+        editingHighlight = null;
+        markToolbarColor();
+        placeToolbar(visible.at(-1), visible[0].top);
       });
     }
 
@@ -661,18 +902,29 @@
       });
     }
 
-    async function saveHighlight() {
-      const anchor = selectedAnchor();
-      if (!anchor) return;
+    async function saveHighlight(swatch) {
+      const noteId = editingHighlight;
+      const anchor = noteId ? null : selectedAnchor();
+      if (!noteId && !anchor) return;
       hideToolbar();
       document.getSelection()?.removeAllRanges();
-      if (await change(items => matchingNote(items, anchor) ? items : [{ id: id(), anchor, comments: [] }, ...items])) {
+      const saved = await change(items => {
+        const existing = noteId ? items.find(note => note.id === noteId) : matchingNote(items, anchor);
+        if (!existing) return anchor ? [{ id: id(), anchor, swatch, comments: [] }, ...items] : items;
+        if (noteSwatch(existing) === swatch) return items;
+        return items.map(note => note.id === existing.id ? withSwatch(note, swatch) : note);
+      });
+      if (saved) {
         render();
         announce(persistent ? "Highlight saved." : "Highlight saved for this tab.");
       }
     }
 
     function startComment() {
+      if (editingHighlight) {
+        show(editingHighlight, null, "draft");
+        return;
+      }
       const anchor = selectedAnchor();
       if (!anchor) return;
       const existing = matchingNote(notes, anchor);
@@ -682,9 +934,11 @@
     }
 
     function show(nextView, anchor = null, focus = "title") {
+      if (editingHighlight) hideToolbar();
       if (view !== nextView || anchor) {
         if (nextView === "new") drafts.delete("new");
         resolved = false;
+        paletteOpen = false;
       }
       open = true;
       view = nextView;
@@ -693,10 +947,12 @@
     }
 
     function close() {
+      if (editingHighlight) hideToolbar();
       view = "all";
       pending = null;
       resolved = false;
       open = false;
+      paletteOpen = false;
       drafts.delete("new");
       render();
       launcher.focus({ preventScroll: true });
@@ -805,7 +1061,7 @@
         if (!note && !anchor) return items;
         if (!note) {
           noteId = id();
-          return [{ id: noteId, anchor, comments: [comment] }, ...items];
+          return [{ id: noteId, anchor, swatch: null, comments: [comment] }, ...items];
         }
         return items.map(item => item.id === noteId ? { ...item, comments: [...item.comments, comment] } : item);
       });
@@ -822,7 +1078,11 @@
     }
 
     function changeComments(noteId, update) {
-      return change(items => items.map(note => note.id === noteId ? { ...note, comments: update(note.comments) } : note));
+      return change(items => items.flatMap(note => {
+        if (note.id !== noteId) return [note];
+        const comments = update(note.comments);
+        return comments.length || noteSwatch(note) !== null ? [{ ...note, comments }] : [];
+      }));
     }
 
     async function updateComment(noteId, commentId, action, nextId) {
@@ -831,7 +1091,16 @@
         : comments.map(comment => comment.id === commentId ? { ...comment, resolved: !comment.resolved } : comment));
       if (!saved) return;
       if (action === "delete") commentEdits.delete(commentId);
-      render(view === noteId && open ? nextId ? `${action}-${nextId}` : "draft" : undefined);
+      if (!notes.some(note => note.id === noteId)) renderAfterRemovingNote(noteId);
+      else render(view === noteId && open ? nextId ? `${action}-${nextId}` : "draft" : undefined);
+    }
+
+    function renderAfterRemovingNote(noteId) {
+      drafts.delete(noteId);
+      if (open && view === noteId) {
+        if (panel.hidden) close();
+        else show("all");
+      } else render();
     }
 
     function passage(id) {
@@ -870,7 +1139,7 @@
       const selected = current || (pending && { id: "new", anchor: pending, comments: [] });
       const match = open && selected ? passage(selected.id) : null;
       const target = inlineTarget(match);
-      paintActive(open && selected, match);
+      markPassage(match, selected?.id === "new");
       for (const card of cards.values()) resizeObserver?.unobserve(card);
       cards.clear();
       inlineRoot.querySelector(".note")?.remove();
@@ -888,6 +1157,7 @@
       }
       launcher.hidden = open;
       launcher.setAttribute("aria-expanded", String(open));
+      renderPalette();
       notice.replaceChildren();
       track.replaceChildren();
       queueLayout();
@@ -930,15 +1200,15 @@
       }
     }
 
-    function paintActive(note, match) {
+    function markPassage(match, isPending) {
+      activeRange = match?.range;
+      if (!activeRange) for (const bracket of passageBrackets) bracket.hidden = true;
       if (!canHighlight) return;
-      CSS.highlights.delete(activeName);
-      CSS.highlights.delete(`${activeName}-thread`);
-      if (!note || !match) return;
-      const threaded = note.id === "new" || note.comments.some(comment => !comment.resolved);
-      const highlight = new Highlight(match.range);
-      highlight.priority = 2;
-      CSS.highlights.set(threaded ? `${activeName}-thread` : activeName, highlight);
+      if (isPending && activeRange) {
+        const highlight = new Highlight(activeRange);
+        highlight.priority = 1;
+        CSS.highlights.set(pendingCommentMark, highlight);
+      } else CSS.highlights.delete(pendingCommentMark);
     }
 
     function noteCard(note, expanded) {
@@ -980,12 +1250,8 @@
       count.setAttribute("aria-label", `${total} ${total === 1 ? "comment" : "comments"}`);
       const remove = deleteButton(note.comments.length ? "Delete note and comments" : "Delete highlight", "trash", async () => {
         if (!await change(items => items.filter(item => item.id !== note.id))) return;
-        drafts.delete(note.id);
         for (const comment of note.comments) commentEdits.delete(comment.id);
-        if (open && view === note.id) {
-          if (panel.hidden) close();
-          else show("all");
-        } else render();
+        renderAfterRemovingNote(note.id);
       }, `remove-${note.id}`);
       remove.disabled = !saved;
       tools.append(disclosure, copy, count, remove);
@@ -1217,11 +1483,41 @@
       return true;
     }
 
-    function layoutAnnotations() {
-      if (!annotations.size) return;
+    function annotationViewport() {
       const sidebar = !panel.hidden && panel.getBoundingClientRect();
-      const right = sidebar && !compact.matches ? sidebar.left : root.clientWidth;
-      const bottom = sidebar && compact.matches ? sidebar.top : innerHeight;
+      return {
+        right: sidebar && !compact.matches ? sidebar.left : root.clientWidth,
+        bottom: sidebar && compact.matches ? sidebar.top : innerHeight
+      };
+    }
+
+    function layoutPassageBrackets({ right, bottom }) {
+      if (!activeRange) return;
+      const width = 5;
+      for (const [i, bracket] of passageBrackets.entries()) {
+        const atStart = i === 0;
+        const endpoint = activeRange.cloneRange();
+        endpoint.collapse(atStart);
+        const rect = endpoint.getBoundingClientRect();
+        const x = rect.left;
+        const y = rect.top + rect.height / 2;
+        const parent = endpoint.startContainer.parentElement;
+        const visible = parent && rect.height && x >= 0 && x <= right && y >= 0 && y < bottom
+          && annotationVisible(parent, x, y);
+        bracket.hidden = !visible;
+        if (!visible) continue;
+        const leftSide = (getComputedStyle(parent).direction !== "rtl") === atStart;
+        const height = Math.min(15, Math.max(6, rect.height - 7));
+        const left = Math.max(0, Math.min(right - width, leftSide ? x - width - 1 : x + 1));
+        const top = Math.max(0, Math.min(bottom - height, rect.bottom - height - 1));
+        bracket.dataset.side = leftSide ? "left" : "right";
+        bracket.style.left = `${left}px`;
+        bracket.style.top = `${top}px`;
+        bracket.style.height = `${height}px`;
+      }
+    }
+
+    function layoutAnnotations({ right, bottom }) {
       const placed = [];
       const height = 14;
       for (const [noteId, { control, end, width }] of annotations) {
@@ -1315,7 +1611,11 @@
         layoutFrame = 0;
         const pageScroll = window.scrollY;
         const pageHeight = document.scrollingElement?.scrollHeight ?? root.scrollHeight;
-        layoutAnnotations();
+        if (activeRange || annotations.size) {
+          const viewport = annotationViewport();
+          layoutPassageBrackets(viewport);
+          layoutAnnotations(viewport);
+        }
         layoutIndicators(pageHeight, pageScroll);
         if (panel.hidden || mode === "fixed" || compact.matches) return;
         const headerBottom = railViewport.getBoundingClientRect().top;
@@ -1361,38 +1661,34 @@
           const index = root.adoptedStyleSheets.indexOf(sheet);
           if (index !== -1) root.adoptedStyleSheets.splice(index, 1);
         }, { once: true });
+        return css => sheet.replaceSync(css);
       } else {
         const style = makeStyle(css);
         (root.head || root).append(style);
         signal.addEventListener("abort", () => style.remove(), { once: true });
+        return css => { style.textContent = css; };
       }
     }
 
-    toolbar.append(button("Highlight", saveHighlight), button("Comment", startComment));
+    toolbar.append(...toolbarSwatches, iconButton("Comment", "comment", startComment));
     toolbar.addEventListener("mousedown", event => { event.preventDefault(); });
+    ui.addEventListener("pointerdown", event => {
+      if (editingHighlight && !event.composedPath().includes(toolbar)) hideToolbar();
+    });
+    renderPalette();
     installStyle(ui, UI_CSS);
     installStyle(inlineRoot, UI_CSS);
     installStyle(document, `
       :root[${railAttribute}] { padding-right: clamp(305px, 32vw, 410px) !important; }
     `);
-    ui.append(annotationLayer, toolbar, indicators, panel, status, launcher);
+    ui.append(...passageBrackets, annotationLayer, toolbar, indicators, panel, status, launcher);
     document.body.append(host);
     if (extensionStorage) document.dispatchEvent(new Event(extensionStateEvent));
-    if (canHighlight) {
-      installStyle(document, `
-        ::highlight(${markName}) { background-color: #f2c73e66; }
-        ::highlight(${commentName}) { background-color: #f2c73e80; text-decoration: underline #b58a20; }
-        ::highlight(${activeName}) { background-color: #f2c73ebf; }
-        ::highlight(${activeName}-thread) { background-color: #f2c73ebf; text-decoration: underline #b58a20; }
-        @media (prefers-color-scheme: dark) {
-          ::highlight(${markName}) { background-color: #efb83350; }
-          ::highlight(${commentName}) { background-color: #efb83366; text-decoration-color: #e2b444; }
-          ::highlight(${activeName}) { background-color: #efb8338c; }
-          ::highlight(${activeName}-thread) { background-color: #efb8338c; text-decoration-color: #e2b444; }
-        }
-      `);
-    }
+    const setHighlightStyles = canHighlight ? installStyle(document, "") : null;
+    if (canHighlight) updateHighlightStyles();
+    const paletteReady = refreshPalette();
     storage.subscribe(refreshNotes);
+    storage.subscribePalette?.(refreshPalette);
     markMode(sidebarModes);
     void restoreMode();
     void refreshNotes();
@@ -1401,9 +1697,14 @@
     document.addEventListener("selectionchange", updateToolbar, { signal });
     document.fonts?.addEventListener("loadingdone", queueLayout, { signal });
     compact.addEventListener("change", () => render(), { signal });
-    window.addEventListener("resize", () => { updateToolbar(); queueLayout(); }, { passive: true, signal });
+    window.addEventListener("resize", () => {
+      if (editingHighlight) hideToolbar();
+      updateToolbar();
+      queueLayout();
+    }, { passive: true, signal });
     window.addEventListener("scroll", event => {
       if (event.composedPath().some(node => node === host || node === inline)) return;
+      if (editingHighlight) hideToolbar();
       updateToolbar();
       queueLayout();
     }, { passive: true, capture: true, signal });
@@ -1411,10 +1712,11 @@
     resizeObserver?.observe(scope);
     resizeObserver?.observe(railViewport);
     document.addEventListener("pointerdown", event => {
-      if (event.pointerType === "mouse" && event.button === 0 && !event.composedPath().includes(host)) {
+      if (event.composedPath().includes(host)) return;
+      if (event.pointerType === "mouse" && event.button === 0) {
         selecting = true;
         hideToolbar();
-      }
+      } else if (editingHighlight && event.isPrimary) hideToolbar();
     }, { passive: true, signal });
     function endSelection() {
       selecting = false;
@@ -1425,13 +1727,17 @@
     window.addEventListener("blur", () => { selecting = false; hideToolbar(); }, { signal });
     document.addEventListener("keydown", event => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (!toolbar.hidden) {
+        hideToolbar();
+        return;
+      }
       const path = event.composedPath();
       if (open && (path.includes(host) || path.includes(inline))) {
         if (armedDelete) armedDelete.cancel();
+        else if (paletteOpen) togglePalette();
         else if (view === "all") close();
         else collapse(view);
       }
-      else if (!toolbar.hidden) hideToolbar();
     }, { signal });
     document.addEventListener("click", event => {
       if (event.defaultPrevented || event.detail !== 1 || !attached.size || !scope.contains(event.target)
@@ -1445,11 +1751,14 @@
       const offset = point.offset ?? point.startOffset;
       for (const [noteId, { range }] of attached) {
         if (range.comparePoint(node, offset) !== 0) continue;
-        if (Array.from(range.getClientRects()).some(rect => event.clientX >= rect.left && event.clientX <= rect.right
-          && event.clientY >= rect.top && event.clientY <= rect.bottom)) {
-          show(noteId, null, `note-${noteId}`);
-          return;
-        }
+        const box = Array.from(range.getClientRects()).find(rect => event.clientX >= rect.left && event.clientX <= rect.right
+          && event.clientY >= rect.top && event.clientY <= rect.bottom);
+        if (!box) continue;
+        const note = notes.find(note => note.id === noteId);
+        if (!note) continue;
+        if (noteSwatch(note) === null) show(noteId, null, `note-${noteId}`);
+        else editHighlight(note, box, event.clientX);
+        return;
       }
     }, { signal });
     const observer = new MutationObserver(records => {
@@ -1457,7 +1766,7 @@
         .every(node => node === inline || node === host))) return;
       index = null;
       clearTimeout(refreshTimer);
-      if (!notes.length) return;
+      if (!notes.length && !pending) return;
       refreshTimer = setTimeout(() => {
         const previous = attached;
         const previousNumbers = noteNumbers;
@@ -1465,8 +1774,7 @@
         if (previous.size !== attached.size || Array.from(previous.keys()).some(key => !attached.has(key))
           || orderedNotes.some(note => previousNumbers.get(note.id) !== noteNumbers.get(note.id))) render();
         else {
-          const selected = notes.find(note => note.id === view);
-          paintActive(open && (selected || (pending && { id: "new" })), passage(view));
+          markPassage(open ? passage(view) : null, view === "new");
           queueLayout();
         }
       }, 150);
@@ -1490,7 +1798,8 @@
       clearTimeout(statusTimer);
       armedDelete?.cancel();
       if (canHighlight) {
-        for (const name of [markName, commentName, activeName, `${activeName}-thread`]) CSS.highlights.delete(name);
+        for (const name of registeredHighlights) CSS.highlights.delete(name);
+        CSS.highlights.delete(pendingCommentMark);
       }
       host.remove();
       if (extensionStorage) document.dispatchEvent(new Event(extensionStateEvent));
@@ -1508,6 +1817,7 @@
       --paper: #fbfaf7;
       --rail: #f3f1eb;
       --ink: #24231f;
+      --swatch-ring: #000;
       --muted: #635f55;
       --line: #dedbd0;
       --hover: #eeebe1;
@@ -1527,6 +1837,7 @@
         --paper: #262722;
         --rail: #20211e;
         --ink: #f0ede3;
+        --swatch-ring: #fff;
         --muted: #b8b4a6;
         --line: #3d3e36;
         --hover: #30312a;
@@ -1558,8 +1869,47 @@
     button:disabled { cursor: default; }
     :focus-visible { outline: 2px solid var(--rule); outline-offset: -2px; }
     svg { display: block; width: 16px; height: 16px; flex: none; }
+    .color-dot {
+      width: 13px;
+      height: 13px;
+      border: 1px solid #80808085;
+      border-radius: 50%;
+      background: var(--swatch);
+    }
+    .color-panel {
+      display: grid;
+      gap: 4px;
+      padding: 6px 10px;
+      border-block-end: 1px solid var(--line);
+      background: var(--paper);
+      font-size: 12px;
+    }
+    .color-row { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+    .swatch-label { display: flex; align-items: center; gap: 4px; }
+    .color-text-button {
+      min-height: 24px;
+      padding: 2px 4px;
+      border: 0;
+      color: var(--muted);
+      background: transparent;
+      font-size: 11px;
+    }
+    .color-text-button:hover { color: var(--ink); background: transparent; text-decoration: underline; }
+    .color-options { display: flex; align-items: center; gap: 3px; }
+    .color-input { width: 24px; height: 24px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+    .color-input::-webkit-color-swatch-wrapper { padding: 4px; }
+    .color-input::-webkit-color-swatch { border: 1px solid #80808085; }
+    .color-input::-moz-color-swatch { border: 1px solid #80808085; }
     .toolbar, .panel, .status, .launcher { position: absolute; background: var(--paper); }
     .annotations { position: absolute; inset: 0; }
+    .passage-bracket {
+      position: absolute;
+      width: 5px;
+      border-block: 1px solid var(--rule);
+      pointer-events: none;
+    }
+    .passage-bracket[data-side="left"] { border-left: 1px solid var(--rule); }
+    .passage-bracket[data-side="right"] { border-right: 1px solid var(--rule); }
     .annotation, .note-number {
       display: grid;
       place-items: center;
@@ -1581,12 +1931,14 @@
       padding: 0;
       border: 0;
     }
-    .annotation:hover, .annotation[aria-current="true"] { background: #f6db8b; }
+    .annotation:hover { background: #f6db8b; }
     .toolbar, .status, .launcher { border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); }
     .toolbar, .panel, .launcher { pointer-events: auto; }
-    .toolbar { display: flex; gap: 4px; padding: 4px; z-index: 2; }
-    .toolbar button { border-color: transparent; }
-    .toolbar button:first-child { background: var(--accent); color: var(--accent-ink); }
+    .toolbar { display: flex; gap: 2px; padding: 4px; z-index: 2; }
+    .toolbar [aria-pressed="true"] .color-dot { outline: 1px solid var(--swatch-ring); outline-offset: 2px; }
+    .toolbar .color-button:focus-visible { outline: none; }
+    .toolbar .color-button:focus-visible .color-dot { outline: 2px solid var(--swatch-ring); outline-offset: 2px; }
+    .toolbar .icon:last-child { margin-inline-start: 4px; }
     .launcher { display: flex; align-items: center; gap: 6px; bottom: max(12px, env(safe-area-inset-bottom)); right: max(12px, env(safe-area-inset-right)); }
     .logo { object-fit: contain; flex: none; }
     .panel {
@@ -1597,9 +1949,10 @@
       background: var(--rail);
       border-inline-start: 1px solid var(--line);
     }
-    header { display: flex; align-items: center; gap: 7px; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+    header { display: flex; align-items: center; gap: 5px; padding: 7px 8px; border-bottom: 1px solid var(--line); }
     h2 { margin: 0; font-size: 14px; }
     header .count { margin-inline-end: auto; }
+    header .icon { flex: none; width: 26px; }
     .modes { display: flex; flex: none; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 6px; }
     .modes button { min-height: 24px; padding: 2px 7px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 12px; }
     .modes button:hover, .modes [aria-pressed="true"] { background: var(--hover); color: var(--ink); }
@@ -1643,7 +1996,8 @@
       border-block-end: 1px solid var(--line);
       background: var(--rail);
     }
-    .note-tools .count { margin-inline-end: auto; white-space: nowrap; }
+    .note-tools .count { white-space: nowrap; }
+    .note-tools > .icon:last-child { margin-inline-start: auto; }
     .note-tools .icon:disabled { opacity: .45; color: var(--muted); }
     .note[data-open] .disclosure svg { transform: rotate(90deg); color: var(--rule); }
     .note-heading { display: flex; align-items: center; margin: 0; }

@@ -2,10 +2,18 @@
   if (globalThis.startLocalTextNotesExtension) return;
   const { siteFor, pageUrl, noteKey, noteRecord, siteKey } = LocalTextNotesSites;
   const modeKey = "notesMode";
+  const colorPrefix = "highlightColor:";
 
   function storageFor(url, signal) {
     const key = noteKey(url);
     const read = async () => noteRecord((await chrome.storage.local.get(key))[key]);
+    function subscribe(listener, matches) {
+      const changed = (changes, area) => {
+        if (area === "local" && matches(changes)) listener();
+      };
+      chrome.storage.onChanged.addListener(changed);
+      signal.addEventListener("abort", () => chrome.storage.onChanged.removeListener(changed), { once: true });
+    }
     return {
       async read() {
         return (await read()).notes;
@@ -15,6 +23,19 @@
       },
       writeMode(mode) {
         return chrome.storage.local.set({ [modeKey]: mode });
+      },
+      async readPalette(keys) {
+        const saved = await chrome.storage.local.get(keys.map(key => colorPrefix + key));
+        return Object.fromEntries(keys.map(key => [key, saved[colorPrefix + key]]));
+      },
+      writePalettePreference(key, value) {
+        return chrome.storage.local.set({ [colorPrefix + key]: value });
+      },
+      resetPaletteSwatches(keys) {
+        return chrome.storage.local.remove(keys.map(key => colorPrefix + key));
+      },
+      subscribePalette(listener) {
+        subscribe(listener, changes => Object.keys(changes).some(key => key.startsWith(colorPrefix)));
       },
       async update(transform) {
         let current = await read();
@@ -31,11 +52,7 @@
         throw new Error("Notes changed too quickly to save.");
       },
       subscribe(listener) {
-        const changed = (changes, area) => {
-          if (area === "local" && key in changes) listener();
-        };
-        chrome.storage.onChanged.addListener(changed);
-        signal.addEventListener("abort", () => chrome.storage.onChanged.removeListener(changed), { once: true });
+        subscribe(listener, changes => key in changes);
       }
     };
   }
