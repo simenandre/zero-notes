@@ -40,3 +40,4 @@ Copy `local-text-notes.js` next to your HTML file and add:
 ```
 
 Select text to highlight or comment. Choose **Show notes** to see highlights and expand comment threads beside the page.
+Use the copy button in the notes header to copy every note on the page as Markdown.
