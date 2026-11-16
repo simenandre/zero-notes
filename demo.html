@@ -61,21 +61,14 @@
       margin-bottom: 40px;
     }
     section + section { margin-top: 30px; }
-    code { font: .88em ui-monospace, monospace; }
-    .embed {
+    footer {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 20px;
       border-top: 1px solid var(--line);
-      padding-top: 22px;
+      padding-top: 18px;
+      font-size: 14px;
     }
-    .embed h2 { font: 600 16px/1.4 Inter, system-ui, sans-serif; letter-spacing: 0; }
-    pre {
-      border: 1px solid var(--line);
-      padding: 12px 14px;
-      border-radius: 7px;
-      margin: 0;
-      overflow: auto;
-      color: var(--accent);
-    }
-    footer { margin-top: 22px; font-size: 14px; }
     footer a { color: var(--accent); }
   </style>
   <script defer src="./local-text-notes.js" data-scope="article"></script>
@@ -98,11 +91,11 @@
         <p>The tide table gives you a starting point. A line of wet seaweed gives you another. When the lower stones disappear, use the path above the beach.</p>
       </section>
     </article>
-    <div class="embed">
-      <h2>Add it to your page</h2>
-      <pre><code>&lt;script defer src="./local-text-notes.js"&gt;&lt;/script&gt;</code></pre>
-    </div>
-    <footer><a href="./privacy.html">Privacy policy</a></footer>
+    <footer>
+      <a href="./help.html">Help</a>
+      <a href="./privacy.html">Privacy policy</a>
+      <a href="https://github.com/zahmadsaleem/zero-notes">GitHub</a>
+    </footer>
   </main>
 </body>
 </html>

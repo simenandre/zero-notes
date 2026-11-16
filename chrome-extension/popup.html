@@ -7,50 +7,173 @@
   <style>
     :root {
       color-scheme: light dark;
-      font: 14px/1.45 Inter, system-ui, sans-serif;
-      --paper: #fffefa;
-      --ink: #292820;
-      --muted: #605e52;
-      --line: #ded8c9;
+      font: 13px/1.4 Inter, system-ui, sans-serif;
+      --paper: #fbfaf7;
+      --rail: #f3f0e9;
+      --ink: #24231f;
+      --muted: #635f55;
+      --line: #e1ddd3;
+      --hover: #eeebe2;
+      --rule: #956913;
+      --accent: #efcf6a;
+      --accent-ink: #282112;
+      --danger: #a12d26;
     }
     @media (prefers-color-scheme: dark) {
-      :root { --paper: #24231f; --ink: #f6f0e3; --muted: #c3bbab; --line: #514d43; }
+      :root {
+        --paper: #262722;
+        --rail: #20211e;
+        --ink: #f0ede3;
+        --muted: #b8b4a6;
+        --line: #3d3e36;
+        --hover: #30312a;
+        --rule: #d4ad58;
+        --danger: #ff9b91;
+      }
     }
-    body { width: 264px; margin: 0; padding: 16px; color: var(--ink); background: var(--paper); }
-    h1 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 17px; }
-    p { margin: 5px 0 0; color: var(--muted); overflow-wrap: anywhere; }
-    #site { color: var(--ink); font-weight: 600; }
-    #status { min-height: 2.9em; margin: 12px 0; }
-    .actions { display: flex; gap: 8px; }
-    #site-toggle { flex: 1; }
-    #cli { width: 100%; margin-top: 8px; }
-    button {
-      padding: 8px 12px;
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { width: 390px; margin: 0; color: var(--ink); background: var(--paper); }
+    h1, p, ul { margin: 0; }
+    button, input { font: inherit; color: inherit; }
+    :where(button, a, input):focus-visible { outline: 2px solid var(--rule); outline-offset: -2px; }
+    svg { display: block; width: 16px; height: 16px; flex: none; }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 13px 15px;
+      border-bottom: 1px solid var(--line);
+    }
+    .brand img { flex: none; }
+    h1 { font-size: 18px; font-weight: 730; letter-spacing: -.025em; }
+    .help-link {
+      margin-inline-start: auto;
+      padding: 4px 9px;
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 5px;
+      color: var(--muted);
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .help-link:hover, .help-link:focus-visible { color: var(--ink); background: var(--hover); }
+    main { padding: 13px 15px 10px; }
+    .search {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 9px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--muted);
+      background: var(--rail);
+    }
+    .search:focus-within { border-color: var(--rule); }
+    .search input { width: 100%; min-width: 0; height: 34px; padding: 0; border: 0; background: transparent; color: var(--ink); }
+    .search input:focus-visible { outline: 0; }
+    .search input::placeholder { color: var(--muted); }
+    .results { min-height: 108px; max-height: 260px; margin-top: 6px; overflow: auto; scrollbar-width: thin; }
+    #pages { padding: 0; list-style: none; }
+    #pages li + li { border-top: 1px solid var(--line); }
+    .page-link {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto 14px;
+      align-items: center;
+      gap: 7px;
+      min-height: 49px;
+      padding: 6px 5px;
+      border-radius: 4px;
+      color: inherit;
+      text-decoration: none;
+    }
+    .page-link:hover, .page-link:focus-visible { background: var(--hover); }
+    .page-title, .page-url, #site { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .page-title { font-size: 13px; font-weight: 650; }
+    .page-url, .page-count, .page-link > svg { color: var(--muted); font-size: 11px; }
+    .page-count { white-space: nowrap; }
+    .page-link[aria-current="page"] > svg { color: var(--rule); }
+    #pages-status { padding: 22px 4px; color: var(--muted); font-size: 12px; }
+    footer { padding: 11px 15px 12px; border-top: 1px solid var(--line); background: var(--rail); }
+    .site-row, .tools, .confirm-actions { display: flex; align-items: center; gap: 6px; }
+    .site-row { justify-content: space-between; }
+    .site-summary { flex: 1; min-width: 0; }
+    .site-label { color: var(--muted); font-size: 11px; }
+    #site { font-weight: 650; }
+    button {
+      min-height: 30px;
+      padding: 4px 9px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
       background: var(--paper);
-      color: var(--ink);
-      font: 600 14px/1.45 Inter, system-ui, sans-serif;
+      font-weight: 600;
       cursor: pointer;
     }
-    button[data-enable] { background: #efcf6a; border-color: #efcf6a; color: #282112; }
-    button:disabled { cursor: default; opacity: .6; }
-    button:focus-visible { outline: 2px solid #a87922; outline-offset: 2px; }
+    button:hover { background: var(--hover); }
+    button:disabled { opacity: .6; cursor: default; }
+    button[data-enable] { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+    button[data-enable]:hover { background: #f6db8b; }
+    .tools { gap: 3px; flex-wrap: wrap; margin-top: 6px; }
+    .tools button { min-height: 26px; padding: 3px 5px; border-color: transparent; background: transparent; color: var(--muted); font-size: 11px; }
+    .tools button:hover { color: var(--ink); background: var(--hover); }
+    .tools #delete-site { margin-inline-start: auto; color: var(--danger); }
+    #status { margin: 6px 0 0; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+    #delete-confirm { display: grid; gap: 8px; margin-top: 7px; padding: 8px; border: 1px solid var(--line); background: var(--paper); font-size: 12px; overflow-wrap: anywhere; }
+    .confirm-actions { justify-content: flex-end; }
+    #confirm-delete { color: var(--danger); }
   </style>
   <script defer src="sites.js"></script>
   <script defer src="popup.js"></script>
 </head>
 <body>
-  <h1>
-    <img src="icons/icon-24.png" srcset="icons/icon-48.png 2x" width="24" height="24" alt="">
-    Zero Notes
-  </h1>
-  <p id="site" hidden></p>
-  <p id="status" role="status">Checking this page…</p>
-  <div class="actions">
-    <button id="site-toggle" type="button" hidden></button>
-    <button id="download" type="button" hidden>Download</button>
-  </div>
-  <button id="cli" type="button" hidden>Connect CLI</button>
+  <header class="brand">
+    <img src="icons/icon-32.png" srcset="icons/icon-48.png 2x" width="26" height="26" alt="">
+    <h1>Zero Notes</h1>
+    <a class="help-link" href="https://madsolame.com/zero-notes/help.html" target="_blank" rel="noopener noreferrer">Help</a>
+  </header>
+  <main aria-label="Saved pages">
+    <div class="search" role="search">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+        <circle cx="7" cy="7" r="4.25"></circle><path d="m10.1 10.1 3.2 3.2" stroke-linecap="round"></path>
+      </svg>
+      <input id="search" type="search" placeholder="Search pages" aria-label="Search saved pages" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="results">
+      <ul id="pages" aria-label="Saved pages" hidden></ul>
+      <p id="pages-status" role="status">Loading saved pages…</p>
+    </div>
+    <template id="page-row">
+      <li>
+        <a class="page-link" target="_blank" rel="noopener noreferrer">
+          <div><span class="page-title"></span><span class="page-url"></span></div>
+          <span class="page-count"></span>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 11 11 5M6 5h5v5"></path>
+          </svg>
+        </a>
+      </li>
+    </template>
+  </main>
+  <footer>
+    <div class="site-row" id="current-site" hidden>
+      <div class="site-summary">
+        <div class="site-label">Current site</div>
+        <p id="site"></p>
+      </div>
+      <button id="site-toggle" type="button" hidden></button>
+    </div>
+    <p id="status" role="status">Checking this page…</p>
+    <div class="tools">
+      <button id="download" type="button" hidden>Export site notes</button>
+      <button id="cli" type="button" hidden>Connect CLI</button>
+      <button id="delete-site" type="button" hidden>Delete site notes…</button>
+    </div>
+    <div id="delete-confirm" role="group" aria-labelledby="delete-prompt" hidden>
+      <p id="delete-prompt"></p>
+      <div class="confirm-actions">
+        <button id="cancel-delete" type="button">Cancel</button>
+        <button id="confirm-delete" type="button">Delete notes</button>
+      </div>
+    </div>
+  </footer>
 </body>
 </html>

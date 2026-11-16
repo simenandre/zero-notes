@@ -1,9 +1,11 @@
 // Firefox runs this as an event page with sites.js loaded first, where importScripts is undefined.
 if (typeof importScripts === "function") importScripts("sites.js");
 
-const { siteFor, pageUrl, noteKey, noteRecord, notesForSite, siteKey } = LocalTextNotesSites;
+const { siteFor, pageUrl, noteKey, noteRecord, notesForSite, removeNotesForSite, siteKey } = LocalTextNotesSites;
 const scriptId = "local-text-notes";
 const contentFiles = ["sites.js", "content.js", "local-text-notes.js"];
+const pendingAccess = chrome.storage.session ?? chrome.storage.local;
+const enableRequestPrefix = "enable-request:";
 let queue = Promise.resolve();
 let cliPort = null;
 let cliReady = false;
@@ -92,12 +94,18 @@ chrome.permissions.onRemoved.addListener(permissions => {
   if (permissions.permissions?.includes("nativeMessaging")) controlCLI("disconnect");
   if (permissions.origins?.length) reconcile(false);
 });
+chrome.permissions.onAdded.addListener(permissions => {
+  if (permissions.origins?.length) {
+    void serialize(enableGrantedSites).catch(error => console.error("Zero Notes:", error));
+  }
+});
 
 async function changeSite(message) {
   const site = siteFor(message.site);
   if (!site || site.id !== message.site) throw new Error("This page cannot be enabled.");
   const stored = await enabledSites();
   if (!message.enabled) {
+    await pendingAccess.remove(enableRequestPrefix + site.id);
     const remaining = stored.filter(id => id !== site.id);
     await chrome.storage.local.set({ [siteKey]: remaining });
     try {
@@ -126,6 +134,44 @@ async function changeSite(message) {
   return { reload: !activated.includes(message.tabId) };
 }
 
+async function enableGrantedSites() {
+  const requests = await pendingAccess.get(null);
+  for (const [key, request] of Object.entries(requests)) {
+    if (!key.startsWith(enableRequestPrefix)) continue;
+    const site = siteFor(request?.site);
+    if (!site || key !== enableRequestPrefix + site.id || !(request.expires > Date.now())) {
+      await pendingAccess.remove(key);
+    } else if (!request.result && await hasAccess(site)) {
+      const result = await changeSite({ ...request, enabled: true });
+      await pendingAccess.set({ [key]: { ...request, result } });
+    }
+  }
+}
+
+async function requestSiteEnable(message) {
+  const site = siteFor(message.site);
+  if (!site || site.id !== message.site || typeof message.requestId !== "string") {
+    throw new Error("Could not identify the site.");
+  }
+  const key = enableRequestPrefix + site.id;
+  if (message.type === "prepare-site-enable") {
+    if (await hasAccess(site)) return { ...await changeSite({ ...message, enabled: true }), enabled: true };
+    const request = { site: site.id, tabId: message.tabId, requestId: message.requestId, expires: Date.now() + 5 * 60_000 };
+    await pendingAccess.set({ [key]: request });
+    return { pending: true };
+  }
+
+  const request = (await pendingAccess.get(key))[key];
+  if (message.type === "cancel-site-enable") {
+    if (request?.requestId === message.requestId && !request.result) await pendingAccess.remove(key);
+    return {};
+  }
+  const result = request?.requestId === message.requestId ? request.result : undefined;
+  const activated = result ?? await changeSite({ ...message, enabled: true });
+  if (request?.requestId === message.requestId) await pendingAccess.remove(key);
+  return { ...activated, enabled: true };
+}
+
 async function writeNotes(message, sender) {
   const site = siteFor(sender.url);
   const url = pageUrl(message.url);
@@ -140,8 +186,19 @@ async function writeNotes(message, sender) {
   const key = noteKey(url);
   const current = noteRecord((await chrome.storage.local.get(key))[key]);
   if (current.revision !== message.revision) return { current };
-  await chrome.storage.local.set({ [key]: { revision: current.revision + 1, notes: message.notes } });
+  const record = { revision: current.revision + 1, notes: message.notes };
+  const title = (typeof message.title === "string" ? message.title.trim().slice(0, 250) : "")
+    || (typeof current.title === "string" ? current.title : "");
+  if (record.notes.length && title) record.title = title;
+  await chrome.storage.local.set({ [key]: record });
   return { saved: true };
+}
+
+async function deleteSiteNotes(message) {
+  const site = siteFor(message.site);
+  if (!site || site.id !== message.site) throw new Error("Could not identify the site.");
+  await removeNotesForSite(site);
+  return {};
 }
 
 function controlCLI(action) {
@@ -200,7 +257,8 @@ function controlCLI(action) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
-  if (message?.type === "cli" && sender.url === chrome.runtime.getURL("popup.html")) {
+  const fromPopup = sender.url === chrome.runtime.getURL("popup.html");
+  if (message?.type === "cli" && fromPopup) {
     Promise.resolve().then(() => controlCLI(message.action)).then(
       respond,
       error => respond({ error: error.message })
@@ -208,8 +266,12 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     return true;
   }
   let task;
-  if (message?.type === "set-site" && sender.url === chrome.runtime.getURL("popup.html")) {
+  if (message?.type === "set-site" && fromPopup) {
     task = () => changeSite(message);
+  } else if (fromPopup && ["prepare-site-enable", "finish-site-enable", "cancel-site-enable"].includes(message?.type)) {
+    task = () => requestSiteEnable(message);
+  } else if (message?.type === "delete-site-notes" && fromPopup) {
+    task = () => deleteSiteNotes(message);
   } else if (message?.type === "write-notes" && sender.tab) {
     task = () => writeNotes(message, sender);
   } else {

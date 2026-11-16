@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Learn to highlight, comment, install, and embed Zero Notes, or read saved notes through its local CLI.">
+  <link rel="icon" href="./chrome-extension/icons/icon-48.png" type="image/png">
+  <title>Help | Zero Notes</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --page: #faf8f2;
+      --paper: #fffdf7;
+      --ink: #272820;
+      --muted: #605e51;
+      --line: #d9d2be;
+      --accent: #755712;
+      --highlight: #f2c73e;
+      font: 16px/1.6 Inter, system-ui, sans-serif;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #20201c;
+        --paper: #282821;
+        --ink: #f1eee1;
+        --muted: #c5bdab;
+        --line: #4a463b;
+        --accent: #ecd07d;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--page); color: var(--ink); }
+    .wrap { width: min(calc(100% - 40px), 1056px); margin-inline: auto; }
+    .site-header { border-bottom: 1px solid var(--line); }
+    .site-header .wrap, .site-footer { display: flex; align-items: center; gap: 10px 20px; flex-wrap: wrap; }
+    .site-header .wrap { justify-content: space-between; min-height: 64px; padding-block: 10px; }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-weight: 740;
+      color: var(--ink);
+      text-decoration: none;
+    }
+    .brand img { display: block; }
+    a { color: var(--accent); text-underline-offset: .2em; }
+    :where(a, summary, button):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(148px, 174px) minmax(0, 1fr);
+      gap: clamp(24px, 5vw, 64px);
+      align-items: start;
+      padding-block: clamp(32px, 6vw, 72px) 60px;
+    }
+    .contents {
+      position: sticky;
+      top: 20px;
+      padding-inline-start: 14px;
+      border-inline-start: 1px solid var(--line);
+      font-size: 14px;
+    }
+    .contents p { margin: 0 0 6px; color: var(--ink); font-weight: 650; }
+    .contents a { display: block; width: fit-content; padding: 4px 0; color: var(--muted); text-decoration: none; }
+    .contents a:hover { color: var(--accent); text-decoration: underline; }
+    article { min-width: 0; }
+    h1, h2 { margin: 0; font-family: "Instrument Serif", Georgia, serif; letter-spacing: -.04em; font-weight: 400; line-height: 1.05; }
+    h1 { font-size: clamp(48px, 8vw, 82px); }
+    h2 { font-size: clamp(32px, 5vw, 43px); }
+    h3 { margin: 26px 0 8px; font-size: 16px; }
+    p, ol, ul { margin: 0 0 13px; }
+    ol, ul { padding-inline-start: 22px; }
+    li + li { margin-top: 7px; }
+    .intro p { margin: 9px 0 0; color: var(--muted); }
+    section {
+      scroll-margin-top: 20px;
+      padding-top: 28px;
+      margin-top: 28px;
+      border-top: 1px solid var(--line);
+    }
+    section > h2 { margin-bottom: 14px; }
+    .practice {
+      margin: 16px 0 34px;
+      border: 1px solid var(--line);
+      border-inline-start: 3px solid var(--highlight);
+      background: var(--paper);
+      padding: 12px 15px;
+    }
+    .practice p { margin: 0; font: 21px/1.55 "Crimson Text", Georgia, serif; }
+    .walkthrough { margin: 14px 0 4px; }
+    .walkthrough summary { width: fit-content; cursor: pointer; color: var(--accent); }
+    figure { margin: 0; }
+    figure img { display: block; max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 5px; }
+    figcaption { margin-top: 6px; color: var(--muted); font-size: 13px; }
+    .walkthrough figure { margin-top: 10px; }
+    .extension-setup {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 255px), 1fr));
+      gap: 18px 24px;
+      align-items: start;
+    }
+    .extension-setup figure { max-width: 390px; }
+    pre {
+      overflow-x: auto;
+      margin: 11px 0 16px;
+      padding: 11px 13px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--paper);
+      color: var(--accent);
+    }
+    code { font: .86em/1.5 "IBM Plex Mono", ui-monospace, monospace; }
+    pre code { font-size: .82em; }
+    p code, li code { overflow-wrap: anywhere; }
+    .agent-example { padding: 10px 12px; border-inline-start: 2px solid var(--highlight); background: var(--paper); overflow-wrap: anywhere; }
+    .agent-example p { margin: 0; }
+    .prompt-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+    #prompt-status { color: var(--muted); font-size: 13px; }
+    #copy-prompt {
+      flex: none;
+      padding: 4px 9px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--page);
+      color: var(--ink);
+      font: inherit;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    #copy-prompt:hover { border-color: var(--accent); }
+    .site-footer { border-top: 1px solid var(--line); padding-block: 16px 32px; font-size: 14px; }
+    @media (max-width: 820px) {
+      .layout { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+      .contents { position: static; display: flex; flex-wrap: wrap; gap: 4px 15px; padding-inline-start: 0; border: 0; }
+      .contents p { flex-basis: 100%; margin: 0; }
+    }
+  </style>
+  <script defer src="./local-text-notes.js" data-scope="article"></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="./chrome-extension/icons/icon-48.png" width="30" height="30" alt="">Zero Notes</a>
+      <a href="./">Try the demo</a>
+    </div>
+  </header>
+  <main class="layout wrap">
+    <nav class="contents" aria-label="On this page">
+      <p>On this page</p>
+      <a href="#using-zero-notes">Highlight and comment</a>
+      <a href="#chrome-extension">Chrome extension</a>
+      <a href="#embed">Embed in a page</a>
+      <a href="#cli">CLI and agents</a>
+    </nav>
+    <article>
+      <header class="intro">
+        <h1>How To</h1>
+        <p>Try the tools on this page, then use them on sites you read.</p>
+      </header>
+
+      <section id="using-zero-notes">
+        <h2>Highlight and comment</h2>
+        <p>Select a few words below to try the floating toolbar.</p>
+        <div class="practice">
+          <p>At low tide, the stepping stones are visible. Check the water level again before heading back.</p>
+        </div>
+        <ol>
+          <li>Choose a color to highlight the text. Click a highlight to open its color picker again.</li>
+          <li>Choose the comment icon to open a draft. Type a comment and select <strong>Post</strong>. Commented text is underlined.</li>
+          <li>Click a number on the page or choose <strong>Show notes</strong> to open the sidebar. Clicking the excerpt opens the note and jumps to its passage. Brackets mark the start and end of the open passage.</li>
+        </ol>
+        <details class="walkthrough" data-local-notes-ignore>
+          <summary>Watch the walkthrough</summary>
+          <figure>
+            <img src="./assets/demo.gif" width="1060" height="690" loading="lazy" alt="Selecting text, choosing yellow and green highlights, and posting an underlined comment.">
+          </figure>
+        </details>
+        <h3>Work with saved notes</h3>
+        <ul>
+          <li>Click a comment’s text to edit it. Choose <strong>Save</strong> or <strong>Cancel</strong>. Use the checkmark to resolve it, or open <strong>Resolved</strong> to reopen it.</li>
+          <li>Use the link icon next to a passage to copy its text link. Use the copy icon in the sidebar header to copy the page’s notes as Markdown.</li>
+          <li>Use the palette in the sidebar header to edit the five colors. Changing a color updates the highlights that use it. <strong>Reset</strong> restores the original colors.</li>
+          <li>Choose <strong>Inline</strong> to keep notes near their passages, or <strong>Fixed</strong> to keep the list together.</li>
+          <li>Use the trash icon to delete a note or the circled × to delete a comment. Select the same control again to confirm.</li>
+        </ul>
+      </section>
+
+      <section id="chrome-extension">
+        <h2>Chrome extension</h2>
+        <div class="extension-setup">
+          <div>
+            <ol>
+              <li>Download or clone the <a href="https://github.com/zahmadsaleem/zero-notes">GitHub repository</a> and locate the <code>chrome-extension</code> folder.</li>
+              <li>Open <code>chrome://extensions</code>, turn on <strong>Developer mode</strong>, and choose <strong>Load unpacked</strong>. Select that folder.</li>
+              <li>Open Zero Notes from Chrome’s toolbar on a page you want to annotate. Select <strong>Enable</strong> and approve access for that site. Reload if the popup asks.</li>
+            </ol>
+            <p>Search the popup by page title or URL. Click a result to open that page.</p>
+            <p><strong>Disable</strong> keeps your notes and turns off annotations on the site. <strong>Export site notes</strong> downloads JSON. <strong>Delete site notes…</strong> asks you to confirm before erasing the site’s notes.</p>
+          </div>
+          <figure data-local-notes-ignore>
+            <img src="./assets/help-popup.png" width="390" height="470" loading="lazy" alt="The Zero Notes popup with search, saved pages, and controls for the current site.">
+            <figcaption>Find a saved page and manage notes for the current site.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section id="embed">
+        <h2>Embed in a page</h2>
+        <p><a href="./local-text-notes.js" download>Download local-text-notes.js</a> and place it beside your HTML file. Add this script tag inside <code>&lt;head&gt;</code> or before <code>&lt;/body&gt;</code>.</p>
+        <pre data-local-notes-ignore><code>&lt;script defer src="./local-text-notes.js"&gt;&lt;/script&gt;</code></pre>
+        <p>To limit annotations to one part of the page, add an attribute such as <code>data-scope="article"</code>. The script saves notes in the visitor’s browser, under your site’s origin.</p>
+      </section>
+
+      <section id="cli">
+        <h2>CLI and agents</h2>
+        <p>Replace <code>[site URL]</code> and give this prompt to an agent on your computer.</p>
+        <div class="agent-example" data-local-notes-ignore>
+          <p id="cli-prompt">Use the Zero Notes CLI to summarize my saved notes for [site URL]. Follow the CLI instructions at <a href="https://github.com/zahmadsaleem/zero-notes">https://github.com/zahmadsaleem/zero-notes</a>.</p>
+          <div class="prompt-actions">
+            <p id="prompt-status" role="status"></p>
+            <button id="copy-prompt" type="button">Copy prompt</button>
+          </div>
+        </div>
+      </section>
+    </article>
+  </main>
+  <footer class="site-footer wrap">
+    <a href="./privacy.html">Privacy policy</a>
+    <a href="https://github.com/zahmadsaleem/zero-notes">GitHub</a>
+  </footer>
+  <script>
+    const promptText = document.getElementById("cli-prompt");
+    const promptStatus = document.getElementById("prompt-status");
+    document.getElementById("copy-prompt").addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(promptText.textContent);
+        promptStatus.textContent = "Copied.";
+      } catch {
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(promptText);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        promptStatus.textContent = "Prompt selected for manual copying.";
+      }
+    });
+  </script>
+</body>
+</html>

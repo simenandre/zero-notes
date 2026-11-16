@@ -42,11 +42,32 @@ globalThis.LocalTextNotesSites = (() => {
     return value || { revision: 0, notes: [] };
   }
 
-  async function notesForSite(site) {
+  function isNoteKey(key) {
+    return key.startsWith(noteKeyPrefix);
+  }
+
+  async function storedNoteRecords() {
     const stored = await chrome.storage.local.get(null);
+    return Object.entries(stored).filter(([key]) => isNoteKey(key));
+  }
+
+  async function savedPages() {
+    const pages = new Map();
+    for (const [key, record] of await storedNoteRecords()) {
+      if (!Array.isArray(record?.notes) || !record.notes.length) continue;
+      const storedUrl = key.slice(noteKeyPrefix.length);
+      const url = pageUrl(storedUrl);
+      if (!url || (pages.has(url) && storedUrl !== url)) continue;
+      const title = typeof record.title === "string" ? record.title.trim() : "";
+      pages.set(url, { url, title, count: record.notes.length });
+    }
+    return [...pages.values()].sort((a, b) => a.url.localeCompare(b.url));
+  }
+
+  async function notesForSite(site) {
     const pages = [];
-    for (const [key, record] of Object.entries(stored)) {
-      if (!key.startsWith(noteKeyPrefix) || !Array.isArray(record?.notes) || !record.notes.length) continue;
+    for (const [key, record] of await storedNoteRecords()) {
+      if (!Array.isArray(record?.notes) || !record.notes.length) continue;
       const url = key.slice(noteKeyPrefix.length);
       if (siteFor(url)?.id === site.id) pages.push({ url, notes: record.notes });
     }
@@ -54,5 +75,11 @@ globalThis.LocalTextNotesSites = (() => {
     return { site: site.id, pages };
   }
 
-  return { siteFor, pageUrl, noteKey, noteRecord, notesForSite, siteKey: "enabledSites" };
+  async function removeNotesForSite(site) {
+    const keys = (await storedNoteRecords()).map(([key]) => key)
+      .filter(key => siteFor(key.slice(noteKeyPrefix.length))?.id === site.id);
+    if (keys.length) await chrome.storage.local.remove(keys);
+  }
+
+  return { siteFor, pageUrl, noteKey, isNoteKey, noteRecord, savedPages, notesForSite, removeNotesForSite, siteKey: "enabledSites" };
 })();

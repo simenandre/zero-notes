@@ -1,13 +1,16 @@
-name: Deploy demo to GitHub Pages
+name: Deploy Zero Notes site to GitHub Pages
 
 on:
   push:
     branches: [main]
     paths:
       - demo.html
+      - help.html
       - privacy.html
       - LICENSE
       - local-text-notes.js
+      - assets/demo.gif
+      - assets/help-popup.png
       - chrome-extension/icons/icon-48.png
       - .github/workflows/pages.yml
   workflow_dispatch:
@@ -30,15 +33,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions/configure-pages@v5
-      - name: Assemble demo
+      - name: Assemble site
         run: |
-          mkdir -p _site/chrome-extension/icons
+          mkdir -p _site/chrome-extension/icons _site/assets
           cp demo.html _site/index.html
-          cp privacy.html LICENSE local-text-notes.js _site/
+          cp help.html privacy.html LICENSE local-text-notes.js _site/
+          cp assets/demo.gif assets/help-popup.png _site/assets/
           cp chrome-extension/icons/icon-48.png _site/chrome-extension/icons/
       - uses: actions/upload-pages-artifact@v4
         with:
           path: _site
-      - name: Publish demo
+      - name: Publish site
         id: deployment
         uses: actions/deploy-pages@v4

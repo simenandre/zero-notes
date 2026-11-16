@@ -43,7 +43,7 @@
           signal.throwIfAborted();
           const notes = transform(current.notes);
           const result = await chrome.runtime.sendMessage({
-            type: "write-notes", url, revision: current.revision, notes
+            type: "write-notes", url, title: document.title, revision: current.revision, notes
           });
           if (result?.saved) return notes;
           if (!result?.current) throw new Error(result?.error || "Could not save notes.");
