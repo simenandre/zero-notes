@@ -298,6 +298,7 @@
     link: "m6.5 9.5 3-3M6 6 3.5 8.5a2.8 2.8 0 0 0 4 4L10 10M6 6l2.5-2.5a2.8 2.8 0 0 1 4 4L10 10",
     trash: "M3 4.5h10m-6.5 0V3h3v1.5M4.5 5l.7 8h5.6l.7-8m-5 2.3v3.4m3-3.4v3.4"
   };
+  const commentDate = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
   function icon(name) {
     const namespace = "http://www.w3.org/2000/svg";
@@ -394,6 +395,7 @@
     const root = document.documentElement;
     const cards = new Map();
     const drafts = new Map();
+    const commentEdits = new Map();
     const markers = new Map();
     const host = element("local-text-notes");
     if (extensionStorage) host.setAttribute("data-extension", "");
@@ -458,6 +460,7 @@
     let refreshTimer = 0;
     let statusTimer = 0;
     let selection = null;
+    const resizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(queueLayout) : null;
 
     function modeSwitch() {
       const group = element("div", "modes");
@@ -790,7 +793,7 @@
       const body = draft?.trim();
       if (!body) return;
       const anchor = pending;
-      const comment = { id: id(), body, resolved: false };
+      const comment = { id: id(), body, resolved: false, createdAt: new Date().toISOString() };
       let noteId;
       const saved = await change(items => {
         const note = anchor ? matchingNote(items, anchor) : items.find(item => item.id === active);
@@ -814,15 +817,17 @@
       } else render();
     }
 
+    function changeComments(noteId, update) {
+      return change(items => items.map(note => note.id === noteId ? { ...note, comments: update(note.comments) } : note));
+    }
+
     async function updateComment(noteId, commentId, action, nextId) {
-      const saved = await change(items => items.map(note => {
-        if (note.id !== noteId) return note;
-        const comments = action === "delete"
-          ? note.comments.filter(comment => comment.id !== commentId)
-          : note.comments.map(comment => comment.id === commentId ? { ...comment, resolved: !comment.resolved } : comment);
-        return { ...note, comments };
-      }));
-      if (saved) render(view === noteId && open ? nextId ? `${action}-${nextId}` : "draft" : undefined);
+      const saved = await changeComments(noteId, comments => action === "delete"
+        ? comments.filter(comment => comment.id !== commentId)
+        : comments.map(comment => comment.id === commentId ? { ...comment, resolved: !comment.resolved } : comment));
+      if (!saved) return;
+      if (action === "delete") commentEdits.delete(commentId);
+      render(view === noteId && open ? nextId ? `${action}-${nextId}` : "draft" : undefined);
     }
 
     function passage(id) {
@@ -858,6 +863,7 @@
       const match = open && selected ? passage(selected.id) : null;
       const target = inlineTarget(match);
       paintActive(open && selected, match);
+      for (const card of cards.values()) resizeObserver?.unobserve(card);
       cards.clear();
       inlineRoot.querySelector(".note")?.remove();
       if (target) {
@@ -899,7 +905,9 @@
         .find(item => item.dataset.focusKey === focus)
         || (target ? cards.get(view).querySelector(".disclosure") : focus && heading);
       control?.focus({ preventScroll: true });
-      if (control?.tagName === "TEXTAREA" && caret) control.setSelectionRange(...caret);
+      if (control?.tagName === "TEXTAREA" && caret && focused.dataset.focusKey === control.dataset.focusKey) {
+        control.setSelectionRange(...caret);
+      }
       if (reveal) {
         cancelAnimationFrame(revealFrame);
         revealFrame = requestAnimationFrame(() => {
@@ -967,6 +975,7 @@
       thread.hidden = !expanded;
       if (expanded) renderThread(thread, note);
       card.append(thread);
+      resizeObserver?.observe(card);
       return card;
     }
 
@@ -1004,6 +1013,65 @@
       return control;
     }
 
+    function commentBody(noteId, comment) {
+      const key = `edit-${comment.id}`;
+      const fieldKey = `edit-field-${comment.id}`;
+      const edit = commentEdits.get(comment.id);
+      if (!edit) {
+        const text = button(comment.body, () => {
+          commentEdits.set(comment.id, { body: comment.body });
+          render(fieldKey);
+          const focused = inlineRoot.activeElement || ui.activeElement;
+          focused?.closest(".comment-editor")?.scrollIntoView({ block: "nearest" });
+        }, "comment-body", key);
+        text.title = "Edit comment";
+        return text;
+      }
+
+      const form = element("form", "comment-editor");
+      const input = element("textarea");
+      input.setAttribute("aria-label", "Edit comment");
+      input.dataset.focusKey = fieldKey;
+      input.rows = 1;
+      input.required = true;
+      input.value = edit.body;
+      const cancel = () => {
+        commentEdits.delete(comment.id);
+        render(key);
+      };
+      const actions = element("div", "edit-actions");
+      const save = element("button", "primary", "Save");
+      save.type = "submit";
+      save.dataset.focusKey = `save-${comment.id}`;
+      save.disabled = !edit.body.trim() || edit.body.trim() === comment.body;
+      actions.append(button("Cancel", cancel, "", `cancel-${comment.id}`), save);
+      input.addEventListener("input", () => {
+        edit.body = input.value;
+        const body = edit.body.trim();
+        save.disabled = !body || body === comment.body;
+        queueLayout();
+      });
+      form.addEventListener("keydown", event => {
+        if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
+        event.preventDefault();
+        cancel();
+      });
+      form.addEventListener("submit", async event => {
+        event.preventDefault();
+        const draft = edit.body;
+        const body = draft.trim();
+        if (!body || body === comment.body) return;
+        const saved = await changeComments(noteId, comments => comments.map(item =>
+          item.id === comment.id ? { ...item, body } : item));
+        if (!saved) return;
+        const finished = commentEdits.get(comment.id) === edit && edit.body === draft;
+        if (finished) commentEdits.delete(comment.id);
+        render(finished && open && view === noteId ? key : undefined);
+      });
+      form.append(input, actions);
+      return form;
+    }
+
     function renderThread(thread, note) {
       const tools = element("div", "thread-tools");
       if (panel.hidden) {
@@ -1030,11 +1098,12 @@
         tools.append(filters);
       }
       if (note.id !== "new") {
-        const actions = element("div", "note-actions");
+        const actions = element("div", "thread-actions");
         if (attached.has(note.id)) actions.append(iconButton("Copy text link", "link", () => copyLink(note)));
         actions.append(deleteButton(note.comments.length ? "Delete note and comments" : "Delete highlight", "trash", async () => {
           if (!await change(items => items.filter(item => item.id !== note.id))) return;
           drafts.delete(note.id);
+          for (const comment of note.comments) commentEdits.delete(comment.id);
           if (open && view === note.id) {
             if (panel.hidden) close();
             else show("all");
@@ -1049,13 +1118,21 @@
       for (const [i, comment] of comments.entries()) {
         const row = element("article", "comment");
         const nextId = (comments[i + 1] || comments[i - 1])?.id;
-        const actions = element("div", "comment-actions");
+        const meta = element("footer", "comment-meta");
+        const created = typeof comment.createdAt === "string" ? Date.parse(comment.createdAt) : NaN;
+        if (Number.isFinite(created)) {
+          const timestamp = element("time", "", commentDate.format(created));
+          timestamp.dateTime = comment.createdAt;
+          meta.append(timestamp);
+        }
+        const actions = element("div", "thread-actions");
         actions.append(
           iconButton(comment.resolved ? "Reopen comment" : "Resolve comment", comment.resolved ? "reopen" : "resolve",
             () => updateComment(note.id, comment.id, "resolve", nextId), `resolve-${comment.id}`),
           deleteButton("Delete comment", "delete", () => updateComment(note.id, comment.id, "delete", nextId), `delete-${comment.id}`)
         );
-        row.append(element("p", "", comment.body), actions);
+        meta.append(actions);
+        row.append(commentBody(note.id, comment), meta);
         list.append(row);
       }
       if (!comments.length && done) list.append(element("p", "notice", "No open comments."));
@@ -1270,7 +1347,6 @@
       updateToolbar();
       queueLayout();
     }, { passive: true, capture: true, signal });
-    const resizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(queueLayout) : null;
     resizeObserver?.observe(root);
     resizeObserver?.observe(scope);
     resizeObserver?.observe(railViewport);
@@ -1499,20 +1575,36 @@
     .icon:hover { color: var(--ink); }
     .note-heading > .icon { margin-inline-end: 4px; }
     .thread { border-top: 1px solid var(--line); }
-    .thread-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 3px 7px 0; }
-    .note-actions, .filters { display: flex; align-items: center; gap: 2px; }
-    .note-actions { margin-inline-start: auto; }
+    .thread-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 3px 8px 0; }
+    .filters { display: flex; align-items: center; gap: 2px; }
+    .thread-actions { display: flex; margin-inline-start: auto; }
+    .thread-actions .icon { width: 24px; min-height: 24px; }
+    .thread-actions .icon:hover { background: transparent; }
+    .thread-actions .icon[data-confirm-delete] { color: var(--danger); }
+    .thread-actions .icon[data-confirm-delete] svg { stroke-width: 2; }
     .filter { min-height: 27px; padding: 2px 6px; border-color: transparent; background: transparent; color: var(--muted); font-size: 12px; }
     .filter[aria-pressed="true"] { border-color: var(--line); background: var(--hover); color: var(--ink); }
     .notice { margin: 0; padding: 6px 10px; color: var(--muted); font-size: 12px; }
     .comment-list { max-height: min(240px, 32dvh); overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
     .comment { padding: 4px 8px 3px 10px; font-size: 13px; }
     .comment + .comment { border-top: 1px solid var(--line); }
-    .comment p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-    .comment-actions { display: flex; justify-content: flex-end; }
-    .comment-actions .icon { width: 24px; min-height: 24px; }
-    .comment-actions .icon:first-child svg { translate: 2px 0; }
-    .comment-actions .icon:last-child svg { translate: -2px 0; }
+    .comment-body {
+      display: block;
+      width: 100%;
+      min-height: 0;
+      padding: 2px 0;
+      border: 0;
+      background: transparent;
+      text-align: start;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      cursor: text;
+    }
+    .comment-meta { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
+    .comment-editor { display: grid; gap: 4px; }
+    .comment-editor textarea { width: 100%; }
+    .edit-actions { display: flex; justify-content: flex-end; gap: 4px; }
+    .edit-actions button { min-height: 28px; }
     .composer { display: flex; align-items: flex-end; gap: 5px; padding: 6px 8px; border-top: 1px solid var(--line); }
     textarea, .copy-field {
       min-width: 0;
@@ -1522,21 +1614,24 @@
       padding: 6px 7px;
       font-size: 13px;
     }
-    textarea { flex: 1; min-height: 32px; max-height: 84px; resize: none; field-sizing: content; }
+    .composer textarea, .comment-editor textarea {
+      min-height: 32px;
+      max-height: min(280px, 30dvh);
+      resize: vertical;
+      field-sizing: content;
+    }
+    .composer textarea { flex: 1; }
     textarea::placeholder { color: var(--muted); }
     .copy-field { display: block; width: calc(100% - 16px); margin: 4px 8px; }
     .primary { background: var(--accent); color: var(--accent-ink); font-size: 13px; font-weight: 650; }
     .primary:hover { background: #f6db8b; }
     .primary:disabled { background: transparent; color: var(--muted); }
-    .icon[data-confirm-delete] { color: var(--danger); background: var(--hover); box-shadow: inset 0 0 0 1px currentColor; }
     .status { bottom: 52px; right: 12px; max-width: calc(100vw - 24px); padding: 6px 10px; font-size: 13px; z-index: 3; }
     @media (max-width: 760px) {
       .panel { inset: auto 0 0; width: auto; max-height: 55dvh; border-inline-start: 0; border-top: 1px solid var(--line); }
       .indicators[data-sidebar="open"] { right: max(0px, env(safe-area-inset-right)); bottom: calc(55dvh + 12px); }
       .rail-track .note { position: static; }
-      .comment-actions .icon { width: 30px; min-height: 30px; }
-      .comment-actions .icon:first-child svg { translate: 3px 0; }
-      .comment-actions .icon:last-child svg { translate: -3px 0; }
+      .thread-actions .icon { min-height: 30px; }
     }
   `;
 
