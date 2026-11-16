@@ -1,0 +1,92 @@
+name: Release extension
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  PUBLISH_EXTENSION: publish-browser-extension@6.2.0
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check tag matches manifest version
+        run: |
+          version="$(jq -r .version chrome-extension/manifest.json)"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match manifest version $version"
+            exit 1
+          fi
+      - name: Package
+        run: ./scripts/package-extension.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: extension
+          path: dist/*.zip
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.zip --generate-notes --verify-tag
+
+  chrome:
+    needs: package
+    if: vars.CHROME_EXTENSION_ID != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: extension
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+      - name: Submit to Chrome Web Store
+        env:
+          CHROME_API_VERSION: v2
+          CHROME_EXTENSION_ID: ${{ vars.CHROME_EXTENSION_ID }}
+          CHROME_PUBLISHER_ID: ${{ vars.CHROME_PUBLISHER_ID }}
+          CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL: ${{ secrets.CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL }}
+          CHROME_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.CHROME_SERVICE_ACCOUNT_PRIVATE_KEY }}
+        run: npx --yes "$PUBLISH_EXTENSION" --chrome-zip zero-notes-chrome-*.zip
+
+  edge:
+    needs: package
+    if: vars.EDGE_PRODUCT_ID != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: extension
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+      - name: Submit to Microsoft Edge Add-ons
+        env:
+          EDGE_PRODUCT_ID: ${{ vars.EDGE_PRODUCT_ID }}
+          EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
+          EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
+        run: npx --yes "$PUBLISH_EXTENSION" --edge-zip zero-notes-chrome-*.zip
+
+  firefox:
+    needs: package
+    if: vars.FIREFOX_EXTENSION_ID != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: extension
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+      - name: Submit to Firefox Add-ons
+        env:
+          FIREFOX_EXTENSION_ID: ${{ vars.FIREFOX_EXTENSION_ID }}
+          FIREFOX_JWT_ISSUER: ${{ secrets.FIREFOX_JWT_ISSUER }}
+          FIREFOX_JWT_SECRET: ${{ secrets.FIREFOX_JWT_SECRET }}
+        run: npx --yes "$PUBLISH_EXTENSION" --firefox-zip zero-notes-firefox-*.zip

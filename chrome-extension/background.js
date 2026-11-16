@@ -1,4 +1,5 @@
-importScripts("sites.js");
+// Firefox runs this as an event page with sites.js loaded first, where importScripts is undefined.
+if (typeof importScripts === "function") importScripts("sites.js");
 
 const { siteFor, pageUrl, noteKey, noteRecord, notesForSite, siteKey } = LocalTextNotesSites;
 const scriptId = "local-text-notes";
