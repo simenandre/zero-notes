@@ -289,11 +289,9 @@
     close: "M4 4l8 8m0-8-8 8",
     chevron: "m6 3.5 4 4.5-4 4.5",
     comment: "M2.5 3.5h11v7H8l-3 2.5v-2.5H2.5z",
-    highlight: "m4 9 3 3m-3-3 6-6 3 3-6 6H4Zm-2 5h9",
     resolve: "m5 8 2 2 4-4",
     reopen: "M5.3 7a2.8 2.8 0 1 1 .6 3.2m-.6-5v2h2",
     delete: "m6 6 4 4m0-4-4 4",
-    jump: "M9 3.5h3.5V7m0-3.5-6 6m5.5-.5v3.5H3.5V4H7",
     copy: "M5.5 5.5h7v7h-7zm5-2v-1h-8v8h1",
     link: "m6.5 9.5 3-3M6 6 3.5 8.5a2.8 2.8 0 0 0 4 4L10 10M6 6l2.5-2.5a2.8 2.8 0 0 1 4 4L10 10",
     trash: "M3 4.5h10m-6.5 0V3h3v1.5M4.5 5l.7 8h5.6l.7-8m-5 2.3v3.4m3-3.4v3.4"
@@ -397,11 +395,13 @@
     const drafts = new Map();
     const commentEdits = new Map();
     const markers = new Map();
+    const annotations = new Map();
     const host = element("local-text-notes");
     if (extensionStorage) host.setAttribute("data-extension", "");
     const ui = host.attachShadow({ mode: extensionStorage ? "closed" : "open" });
     const inline = element("local-text-notes-inline");
     const inlineRoot = inline.attachShadow({ mode: extensionStorage ? "closed" : "open" });
+    const annotationLayer = element("div", "annotations");
     const panel = element("aside", "panel");
     panel.id = "notes-panel";
     panel.setAttribute("aria-labelledby", "notes-title");
@@ -439,6 +439,8 @@
     launcher.setAttribute("aria-controls", panel.id);
     launcher.setAttribute("aria-expanded", "false");
     let notes = [];
+    let orderedNotes = [];
+    let noteNumbers = new Map();
     let persistent = true;
     let index = null;
     let attached = new Map();
@@ -585,6 +587,9 @@
         CSS.highlights.set(markName, marks);
         CSS.highlights.set(commentName, comments);
       }
+      orderedNotes = notesInPageOrder(notes);
+      noteNumbers = new Map(orderedNotes.map((note, i) => [note.id, i + 1]));
+      syncAnnotations();
     }
 
     function announce(message) {
@@ -716,7 +721,7 @@
       queueLayout();
     }
 
-    function openFromMarker(note) {
+    function openAtPassage(note) {
       // Open first so a sidebar reflow or inline thread is included in the scroll geometry.
       show(note.id, null, `note-${note.id}`);
       jump(note);
@@ -739,14 +744,14 @@
         await navigator.clipboard.writeText(url.href);
         announce("Text link copied.");
       } catch {
-        const thread = cards.get(note.id)?.querySelector(".thread");
-        if (!thread) return;
-        thread.querySelector(".copy-field")?.remove();
+        const card = cards.get(note.id);
+        if (!card) return;
+        card.querySelector(".copy-field")?.remove();
         const field = element("input", "copy-field");
         field.readOnly = true;
         field.value = url.href;
         field.setAttribute("aria-label", "Text link to copy");
-        thread.querySelector(".thread-tools").after(field);
+        card.querySelector(".note-heading").after(field);
         field.focus();
         field.select();
       }
@@ -756,8 +761,7 @@
       const url = new URL(location.href);
       url.hash = url.hash.split(":~:", 1)[0];
       const lines = [`# ${document.title.trim() || url.href}`, "", url.href];
-      const ordered = [...notes].sort((a, b) => (attached.get(a.id)?.from ?? Infinity) - (attached.get(b.id)?.from ?? Infinity));
-      for (const note of ordered) {
+      for (const note of orderedNotes) {
         lines.push("", `> ${note.anchor.exact}`);
         if (note.comments.length) lines.push("");
         for (const comment of note.comments) {
@@ -837,6 +841,10 @@
       if (match) return { ...match, range: rangeFor(index, match) };
     }
 
+    function notesInPageOrder(items) {
+      return [...items].sort((a, b) => (passage(a.id)?.from ?? Infinity) - (passage(b.id)?.from ?? Infinity) || 0);
+    }
+
     function inlineTarget(match) {
       if (mode === "fixed" || !compact.matches || !match) return null;
       const end = match.range.endContainer;
@@ -892,8 +900,7 @@
       if (target) {
         inlineRoot.append(noteCard(selected, true));
       } else {
-        const ordered = selected?.id === "new" ? [...notes, selected] : [...notes];
-        ordered.sort((a, b) => (passage(a.id)?.from ?? Infinity) - (passage(b.id)?.from ?? Infinity) || 0);
+        const ordered = selected?.id === "new" ? notesInPageOrder([...notes, selected]) : orderedNotes;
         if (!ordered.length) track.append(element("p", "notice", "Select text on the page to add a highlight or comment."));
         for (const note of ordered) track.append(noteCard(note, note.id === view));
         if (mode === "fixed") railViewport.scrollTop = wasFixed ? sidebarScroll : 0;
@@ -940,36 +947,49 @@
       const match = passage(note.id);
       if (!match) card.dataset.detached = "";
       if (expanded) card.dataset.open = "";
-      const heading = element("div", "note-heading");
-      const title = element("h3");
-      const disclosure = button("", () => expanded ? collapse(note.id) : show(note.id, null, `note-${note.id}`), "disclosure", `note-${note.id}`);
-      disclosure.setAttribute("aria-expanded", String(expanded));
+      const saved = note.id !== "new";
       const threadId = `thread-${cards.size}`;
-      disclosure.setAttribute("aria-controls", threadId);
-      const isHighlight = note.id !== "new" && !note.comments.length;
-      const excerpt = element("span", "excerpt", note.anchor.exact);
+      const heading = element("h3", "note-heading");
+      heading.id = `note-heading-${cards.size}`;
+      const number = noteNumbers.get(note.id);
+      if (number) {
+        const badge = element("span", "note-number", String(number));
+        badge.setAttribute("aria-hidden", "true");
+        heading.append(badge);
+      }
+      const excerpt = saved
+        ? button(note.anchor.exact, () => openAtPassage(note), "excerpt", `jump-${note.id}`)
+        : element("span", "excerpt", note.anchor.exact);
       excerpt.title = note.anchor.exact;
+      if (saved) excerpt.setAttribute("aria-description", match ? "Open note and jump to passage" : "Open note");
+      heading.append(excerpt);
+
+      const tools = element("div", "note-tools thread-actions");
+      const label = `${expanded ? "Collapse" : "Expand"} note${number ? ` ${number}` : ""}`;
+      const disclosure = iconButton(label, "chevron",
+        () => expanded ? collapse(note.id) : show(note.id, null, `note-${note.id}`), `note-${note.id}`);
+      disclosure.classList.add("disclosure");
+      disclosure.setAttribute("aria-expanded", String(expanded));
+      disclosure.setAttribute("aria-controls", threadId);
+      disclosure.setAttribute("aria-describedby", heading.id);
+      const copy = iconButton("Copy text link", "link", () => copyLink(note), `copy-${note.id}`);
+      copy.disabled = !saved || !match;
       const count = element("span", "count");
-      if (isHighlight) {
-        count.textContent = "Highlight";
-      } else {
-        const total = note.comments.length;
-        count.append(icon("comment"), document.createTextNode(total));
-        count.setAttribute("aria-label", `${total} ${total === 1 ? "comment" : "comments"}`);
-      }
-      disclosure.append(icon(isHighlight && !expanded ? "highlight" : "chevron"), excerpt, count);
-      title.append(disclosure);
-      heading.append(title);
-      if (expanded && match && note.id !== "new") {
-        const jumpButton = iconButton("Jump to passage", "jump", () => {
-          jump(note);
-          if (mode === "inline" && ui.activeElement === jumpButton) disclosure.focus({ preventScroll: true });
-        });
-        jumpButton.hidden = mode === "inline";
-        jumpButton.dataset.jump = "";
-        heading.append(jumpButton);
-      }
-      card.append(heading);
+      const total = note.comments.length;
+      count.append(icon("comment"), document.createTextNode(total));
+      count.setAttribute("aria-label", `${total} ${total === 1 ? "comment" : "comments"}`);
+      const remove = deleteButton(note.comments.length ? "Delete note and comments" : "Delete highlight", "trash", async () => {
+        if (!await change(items => items.filter(item => item.id !== note.id))) return;
+        drafts.delete(note.id);
+        for (const comment of note.comments) commentEdits.delete(comment.id);
+        if (open && view === note.id) {
+          if (panel.hidden) close();
+          else show("all");
+        } else render();
+      }, `remove-${note.id}`);
+      remove.disabled = !saved;
+      tools.append(disclosure, copy, count, remove);
+      card.append(tools, heading);
       const thread = element("div", "thread");
       thread.id = threadId;
       thread.hidden = !expanded;
@@ -1097,20 +1117,6 @@
         }
         tools.append(filters);
       }
-      if (note.id !== "new") {
-        const actions = element("div", "thread-actions");
-        if (attached.has(note.id)) actions.append(iconButton("Copy text link", "link", () => copyLink(note)));
-        actions.append(deleteButton(note.comments.length ? "Delete note and comments" : "Delete highlight", "trash", async () => {
-          if (!await change(items => items.filter(item => item.id !== note.id))) return;
-          drafts.delete(note.id);
-          for (const comment of note.comments) commentEdits.delete(comment.id);
-          if (open && view === note.id) {
-            if (panel.hidden) close();
-            else show("all");
-          } else render();
-        }, "remove"));
-        tools.append(actions);
-      }
       if (tools.childElementCount) thread.append(tools);
       if (note.id !== "new" && !attached.has(note.id)) thread.append(element("p", "notice", "Text unavailable"));
       const list = element("div", "comment-list");
@@ -1165,28 +1171,87 @@
       thread.append(form);
     }
 
-    function passageVisible(range, rects, right, bottom) {
-      let left = 0;
-      let top = 0;
-      let element = range.commonAncestorContainer;
-      if (element.nodeType !== Node.ELEMENT_NODE) element = element.parentElement;
-      for (; element && element !== root; element = element.parentElement) {
-        const { overflowX, overflowY } = getComputedStyle(element);
-        const clipsX = overflowX !== "visible";
-        const clipsY = overflowY !== "visible";
-        if (!clipsX && !clipsY) continue;
-        const rect = element.getBoundingClientRect();
-        if (clipsX) {
-          left = Math.max(left, rect.left);
-          right = Math.min(right, rect.right);
-        }
-        if (clipsY) {
-          top = Math.max(top, rect.top);
-          bottom = Math.min(bottom, rect.bottom);
-        }
+    function syncAnnotations() {
+      for (const [noteId, { control }] of annotations) {
+        if (attached.has(noteId)) continue;
+        control.remove();
+        annotations.delete(noteId);
       }
-      return right > left && bottom > top && rects.some(rect =>
-        rect.bottom > top && rect.top < bottom && rect.right > left && rect.left < right);
+      let previous = null;
+      for (const { id: noteId } of orderedNotes) {
+        const match = attached.get(noteId);
+        if (!match) continue;
+        let annotation = annotations.get(noteId);
+        if (!annotation) {
+          const control = button("", () => show(noteId, null, `note-${noteId}`), "annotation");
+          control.hidden = true;
+          control.removeAttribute("data-focus-key");
+          annotation = { control };
+          annotations.set(noteId, annotation);
+        }
+        const { control } = annotation;
+        const number = String(noteNumbers.get(noteId));
+        const label = `Open note ${number}`;
+        control.textContent = number;
+        control.setAttribute("aria-label", label);
+        control.title = label;
+        annotation.width = Math.max(14, number.length * 7 + 4);
+        control.style.width = `${annotation.width}px`;
+        annotation.end = match.range.cloneRange();
+        annotation.end.collapse(false);
+        const next = previous ? previous.nextElementSibling : annotationLayer.firstElementChild;
+        if (next !== control) annotationLayer.insertBefore(control, next);
+        previous = control;
+      }
+    }
+
+    function annotationVisible(parent, x, y) {
+      if (getComputedStyle(parent).visibility !== "visible") return false;
+      for (let node = parent; node && node !== root; node = node.parentElement) {
+        const { overflowX, overflowY } = getComputedStyle(node);
+        if (overflowX === "visible" && overflowY === "visible") continue;
+        const bounds = node.getBoundingClientRect();
+        if (overflowX !== "visible" && (x < bounds.left || x > bounds.right)) return false;
+        if (overflowY !== "visible" && (y < bounds.top || y > bounds.bottom)) return false;
+      }
+      return true;
+    }
+
+    function layoutAnnotations() {
+      if (!annotations.size) return;
+      const sidebar = !panel.hidden && panel.getBoundingClientRect();
+      const right = sidebar && !compact.matches ? sidebar.left : root.clientWidth;
+      const bottom = sidebar && compact.matches ? sidebar.top : innerHeight;
+      const placed = [];
+      const height = 14;
+      for (const [noteId, { control, end, width }] of annotations) {
+        const rect = end.getBoundingClientRect();
+        const x = rect.left;
+        const y = rect.top + rect.height / 2;
+        const parent = end.endContainer.parentElement;
+        const visible = parent && rect.height && x >= 0 && x <= right && y >= 0 && y < bottom
+          && annotationVisible(parent, x, y);
+        control.hidden = !visible;
+        if (!visible) continue;
+        const direction = getComputedStyle(parent).direction;
+        const start = Math.max(0, Math.min(right - width, direction === "rtl" ? x - width - 1 : x + 1));
+        let left = start;
+        let top = Math.max(0, Math.min(bottom - height, rect.top - 8));
+        for (const box of placed) {
+          if (left >= box.right || left + width <= box.left || Math.abs(top - box.top) >= height) continue;
+          const next = direction === "rtl" ? box.left - width - 2 : box.right + 2;
+          if (next >= 0 && next + width <= right) left = next;
+          else {
+            left = start;
+            top = top >= height + 2 ? top - height - 2 : top + height + 2;
+          }
+        }
+        placed.push({ left, right: left + width, top });
+        control.style.left = `${left}px`;
+        control.style.top = `${top}px`;
+        if (open && view === noteId) control.setAttribute("aria-current", "true");
+        else control.removeAttribute("aria-current");
+      }
     }
 
     function layoutIndicators(pageHeight, pageScroll) {
@@ -1224,7 +1289,7 @@
         if (!marker) {
           marker = button("", () => {
             const selected = notes.find(note => note.id === marker.dataset.note);
-            if (selected) openFromMarker(selected);
+            if (selected) openAtPassage(selected);
           }, "indicator");
           marker.removeAttribute("data-focus-key");
           markers.set(slot, marker);
@@ -1250,25 +1315,19 @@
         layoutFrame = 0;
         const pageScroll = window.scrollY;
         const pageHeight = document.scrollingElement?.scrollHeight ?? root.scrollHeight;
+        layoutAnnotations();
         layoutIndicators(pageHeight, pageScroll);
-        if (panel.hidden) return;
-        if (mode === "fixed") return;
+        if (panel.hidden || mode === "fixed" || compact.matches) return;
         const headerBottom = railViewport.getBoundingClientRect().top;
-        const bounds = panel.getBoundingClientRect();
-        const right = compact.matches ? innerWidth : bounds.left;
-        const bottom = compact.matches ? bounds.top : innerHeight;
         const entries = [];
         for (const [id, card] of cards) {
           const range = passage(id)?.range;
-          const rects = Array.from(range?.getClientRects() || []).filter(rect => rect.width && rect.height);
-          const jumpButton = card.querySelector(".note-heading button[data-jump]");
-          if (jumpButton) jumpButton.hidden = range && passageVisible(range, rects, right, bottom);
-          if (compact.matches) continue;
-          const first = rects[0];
-          const start = first ? Math.round(first.top + first.height / 2 + pageScroll - headerBottom - 20) : 0;
+          const first = Array.from(range?.getClientRects() || []).find(rect => rect.width && rect.height);
+          const heading = card.querySelector(".note-heading");
+          const headingCenter = heading.offsetTop + heading.offsetHeight / 2;
+          const start = first ? Math.round(first.top + first.height / 2 + pageScroll - headerBottom - headingCenter) : 0;
           entries.push({ id, card, start, height: card.offsetHeight });
         }
-        if (compact.matches) return;
         let nextTop = 8;
         let minimumTop = nextTop;
         const gap = 6;
@@ -1316,7 +1375,7 @@
     installStyle(document, `
       :root[${railAttribute}] { padding-right: clamp(305px, 32vw, 410px) !important; }
     `);
-    ui.append(toolbar, indicators, panel, status, launcher);
+    ui.append(annotationLayer, toolbar, indicators, panel, status, launcher);
     document.body.append(host);
     if (extensionStorage) document.dispatchEvent(new Event(extensionStateEvent));
     if (canHighlight) {
@@ -1340,6 +1399,7 @@
     updateToolbar();
 
     document.addEventListener("selectionchange", updateToolbar, { signal });
+    document.fonts?.addEventListener("loadingdone", queueLayout, { signal });
     compact.addEventListener("change", () => render(), { signal });
     window.addEventListener("resize", () => { updateToolbar(); queueLayout(); }, { passive: true, signal });
     window.addEventListener("scroll", event => {
@@ -1400,8 +1460,10 @@
       if (!notes.length) return;
       refreshTimer = setTimeout(() => {
         const previous = attached;
+        const previousNumbers = noteNumbers;
         paint();
-        if (previous.size !== attached.size || Array.from(previous.keys()).some(key => !attached.has(key))) render();
+        if (previous.size !== attached.size || Array.from(previous.keys()).some(key => !attached.has(key))
+          || orderedNotes.some(note => previousNumbers.get(note.id) !== noteNumbers.get(note.id))) render();
         else {
           const selected = notes.find(note => note.id === view);
           paintActive(open && (selected || (pending && { id: "new" })), passage(view));
@@ -1497,6 +1559,29 @@
     :focus-visible { outline: 2px solid var(--rule); outline-offset: -2px; }
     svg { display: block; width: 16px; height: 16px; flex: none; }
     .toolbar, .panel, .status, .launcher { position: absolute; background: var(--paper); }
+    .annotations { position: absolute; inset: 0; }
+    .annotation, .note-number {
+      display: grid;
+      place-items: center;
+      flex: none;
+      min-width: 14px;
+      height: 14px;
+      border-radius: 0;
+      background: var(--accent);
+      color: var(--accent-ink);
+      font-size: 10px;
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+    .annotation {
+      position: absolute;
+      pointer-events: auto;
+      min-height: 0;
+      padding: 0;
+      border: 0;
+    }
+    .annotation:hover, .annotation[aria-current="true"] { background: #f6db8b; }
     .toolbar, .status, .launcher { border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); }
     .toolbar, .panel, .launcher { pointer-events: auto; }
     .toolbar { display: flex; gap: 4px; padding: 4px; z-index: 2; }
@@ -1550,34 +1635,42 @@
     .rail-track .note { position: absolute; inset-inline: 0; }
     .panel[data-mode="fixed"] .note { position: static; }
     .note { overflow: hidden; background: var(--paper); border-block: 1px solid var(--line); }
-    :host(local-text-notes-inline) .note { border: 1px solid var(--line); border-radius: 6px; }
+    :host(local-text-notes-inline) .note { border: 1px solid var(--line); }
     .note[data-open] { border-color: var(--rule); }
-    .note-heading { display: flex; align-items: center; }
-    .note-heading h3 { min-width: 0; flex: 1; margin: 0; font-size: 13px; }
-    .disclosure {
-      display: grid;
-      grid-template-columns: 16px minmax(0, 1fr) auto;
-      align-items: center;
-      gap: 6px;
-      width: 100%;
-      min-height: 40px;
-      border: 0;
-      border-radius: 0;
-      text-align: start;
+    .note-tools {
+      gap: 8px;
+      padding: 2px 8px 2px 5px;
+      border-block-end: 1px solid var(--line);
+      background: var(--rail);
     }
-    .disclosure svg { color: var(--muted); }
-    .note[data-open] .disclosure > svg { transform: rotate(90deg); color: var(--rule); }
-    .excerpt { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .note[data-open] .excerpt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; overflow-wrap: anywhere; }
+    .note-tools .count { margin-inline-end: auto; white-space: nowrap; }
+    .note-tools .icon:disabled { opacity: .45; color: var(--muted); }
+    .note[data-open] .disclosure svg { transform: rotate(90deg); color: var(--rule); }
+    .note-heading { display: flex; align-items: center; margin: 0; }
+    .note-number { margin-inline-start: 10px; padding-inline: 3px; }
+    .excerpt {
+      display: block;
+      width: 100%;
+      min-width: 0;
+      min-height: 32px;
+      padding: 5px 10px;
+      border: 0;
+      text-align: start;
+      font-size: 14px;
+      font-weight: 400;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .note-number + .excerpt { padding-inline-start: 7px; }
     .count { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
     .count svg { width: 14px; height: 14px; }
     .icon { display: grid; place-items: center; width: 30px; min-height: 30px; padding: 0; background: transparent; color: var(--muted); border: 0; }
     .icon:hover { color: var(--ink); }
-    .note-heading > .icon { margin-inline-end: 4px; }
     .thread { border-top: 1px solid var(--line); }
     .thread-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 3px 8px 0; }
     .filters { display: flex; align-items: center; gap: 2px; }
-    .thread-actions { display: flex; margin-inline-start: auto; }
+    .thread-actions { display: flex; align-items: center; margin-inline-start: auto; }
     .thread-actions .icon { width: 24px; min-height: 24px; }
     .thread-actions .icon:hover { background: transparent; }
     .thread-actions .icon[data-confirm-delete] { color: var(--danger); }
@@ -1623,6 +1716,7 @@
     .composer textarea { flex: 1; }
     textarea::placeholder { color: var(--muted); }
     .copy-field { display: block; width: calc(100% - 16px); margin: 4px 8px; }
+    .note button, .note textarea, .note .copy-field, .note .modes { border-radius: 0; }
     .primary { background: var(--accent); color: var(--accent-ink); font-size: 13px; font-weight: 650; }
     .primary:hover { background: #f6db8b; }
     .primary:disabled { background: transparent; color: var(--muted); }
