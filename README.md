@@ -2,7 +2,7 @@
 
 Highlight text and leave comments. Notes stay in your browser.
 
-[Try the live demo](https://madsolame.com/zero-notes/)
+[Install from the Chrome Web Store](https://chromewebstore.google.com/detail/zero-notes/mjabdjgldanojgmehoiihcbkafkhobbh) · [Try the live demo](https://madsolame.com/zero-notes/) · [How To](https://madsolame.com/zero-notes/help.html)
 
 [Privacy policy](privacy.html) · [MIT License](LICENSE)
 
@@ -10,18 +10,20 @@ Highlight text and leave comments. Notes stay in your browser.
 
 ## Chrome extension
 
-1. Open `chrome://extensions` and turn on **Developer mode**.
-2. Choose **Load unpacked** and select the `chrome-extension/` folder.
-3. Open the extension on a page and click **Enable on this site**. Saved highlights appear automatically on enabled sites.
+After installing, open Zero Notes on a page you want to annotate. Click **Enable** and approve access for that site. Saved highlights appear automatically on enabled sites.
+
+To try a development build, open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked**, and select the `chrome-extension/` folder.
 
 ## Read notes from the terminal
 
-Use Google Chrome on macOS or Linux and Go 1.22 or later. Copy the ID from the Zero Notes card at `chrome://extensions` in the profile with your notes. Run this from the repo, replacing `EXTENSION_ID` with that ID.
+Use Google Chrome on macOS or Linux and Go 1.22 or later. From this repo, register the helper for the Chrome Web Store installation.
 
 ```sh
 go build -o zero-notes ./cli
-./zero-notes install EXTENSION_ID
+./zero-notes install mjabdjgldanojgmehoiihcbkafkhobbh
 ```
+
+For an unpacked build, substitute its ID from the Zero Notes card at `chrome://extensions` in the profile with your notes.
 
 The installer registers the helper with Chrome and prints the registration path. If **Connect CLI** is missing, reload the extension from its card at `chrome://extensions`. Then click **Connect CLI** in the popup and approve Native Messaging.
 
