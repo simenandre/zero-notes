@@ -111,7 +111,7 @@ async function changeSite(message) {
     try {
       await registerFor(remaining);
     } finally {
-      if (!remaining.some(id => siteFor(id).pattern === site.pattern)) {
+      if (!message.keepAccess && !remaining.some(id => siteFor(id).pattern === site.pattern)) {
         await chrome.permissions.remove({ origins: [site.pattern] }).catch(error => {
           console.warn("Zero Notes could not release site access:", error.message);
         });
@@ -171,6 +171,36 @@ async function requestSiteEnable(message) {
   if (request?.requestId === message.requestId) await pendingAccess.remove(key);
   return { ...activated, enabled: true };
 }
+
+function toggleFromShortcut(tab) {
+  const site = siteFor(tab?.url);
+  if (!site) return;
+  // permissions.request needs the shortcut's user gesture, so it must start before any await.
+  const request = chrome.permissions.request({ origins: [site.pattern] });
+  void (async () => {
+    if (!(await enabledSites()).includes(site.id) && !(await hasAccess(site))) {
+      const granted = await request.catch(() => null);
+      // Some browsers only show the access prompt from the popup, so fall back to it for new sites.
+      if (granted === null) await chrome.action.openPopup?.({ windowId: tab.windowId });
+      if (!granted) return;
+    } else {
+      request.catch(() => {});
+    }
+    await serialize(async () => {
+      if ((await enabledSites()).includes(site.id)) {
+        // Keep the site's access so the shortcut can turn notes back on without another prompt.
+        await changeSite({ site: site.id, enabled: false, keepAccess: true, tabId: tab.id });
+      } else if (await hasAccess(site)) {
+        const { reload } = await changeSite({ site: site.id, enabled: true, tabId: tab.id });
+        if (reload) await chrome.tabs.reload(tab.id);
+      }
+    });
+  })().catch(error => console.error("Zero Notes:", error));
+}
+
+chrome.commands.onCommand.addListener((command, tab) => {
+  if (command === "toggle-notes") toggleFromShortcut(tab);
+});
 
 async function writeNotes(message, sender) {
   const site = siteFor(sender.url);
