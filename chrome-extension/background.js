@@ -1,7 +1,9 @@
 // Firefox runs this as an event page with sites.js loaded first, where importScripts is undefined.
 if (typeof importScripts === "function") importScripts("sites.js");
 
-const { siteFor, pageUrl, noteKey, noteRecord, notesForSite, removeNotesForSite, siteKey } = LocalTextNotesSites;
+const {
+  siteFor, pageUrl, frameId, noteKey, noteRecord, notesForSite, removeNotesForSite, siteKey, embeddedKey
+} = LocalTextNotesSites;
 const scriptId = "local-text-notes";
 const contentFiles = ["sites.js", "content.js", "local-text-notes.js"];
 const pendingAccess = chrome.storage.session ?? chrome.storage.local;
@@ -20,17 +22,42 @@ async function enabledSites() {
   return (await chrome.storage.local.get(siteKey))[siteKey] || [];
 }
 
-async function hasAccess(site) {
-  if (site.id === "file:///" && !(await chrome.extension.isAllowedFileSchemeAccess())) return false;
-  return chrome.permissions.contains({ origins: [site.pattern] });
+// Origin patterns of embedded frames (such as claude.ai artifacts) enabled per top-level site.
+async function embeddedFrames() {
+  return (await chrome.storage.local.get(embeddedKey))[embeddedKey] || {};
 }
 
-function matchPatterns(sites) {
-  return [...new Set(sites.map(id => siteFor(id).pattern))];
+function validFramePatterns(site, frames) {
+  if (!Array.isArray(frames)) return [];
+  const patterns = frames.map(pattern => {
+    const frame = siteFor(pattern.replace(/\*$/u, ""));
+    return frame && frame.id !== "file:///" && frame.pattern === pattern ? pattern : null;
+  });
+  return [...new Set(patterns.filter(pattern => pattern && pattern !== site.pattern))];
+}
+
+async function hasAccess(site, frames = []) {
+  if (site.id === "file:///" && !(await chrome.extension.isAllowedFileSchemeAccess())) return false;
+  return chrome.permissions.contains({ origins: [site.pattern, ...frames] });
+}
+
+async function matchPatterns(sites) {
+  const frames = await embeddedFrames();
+  return [...new Set(sites.flatMap(id => [siteFor(id).pattern, ...(frames[id] || [])]))];
+}
+
+async function frameContext(sender) {
+  const site = siteFor(sender.tab?.url);
+  const url = pageUrl(sender.tab?.url);
+  const frame = frameId(sender.url);
+  if (!site || !url || !frame || !(await enabledSites()).includes(site.id)) return null;
+  // Only frames the person enabled from the popup get notes, so ads and widgets stay untouched.
+  if (!(await embeddedFrames())[site.id]?.includes(siteFor(sender.url)?.pattern)) return null;
+  return { url, frame };
 }
 
 async function registerFor(sites) {
-  const matches = matchPatterns(sites);
+  const matches = await matchPatterns(sites);
   const [registered] = await chrome.scripting.getRegisteredContentScripts({ ids: [scriptId] });
   if (!matches.length) {
     if (registered) await chrome.scripting.unregisterContentScripts({ ids: [scriptId] });
@@ -41,11 +68,13 @@ async function registerFor(sites) {
     id: scriptId,
     js: contentFiles,
     matches,
+    allFrames: true,
     runAt: "document_idle",
     persistAcrossSessions: true
   };
   if (registered) {
-    if (registered.matches.join() !== matches.join() || registered.js.join() !== contentFiles.join()) {
+    if (registered.matches.join() !== matches.join() || registered.js.join() !== contentFiles.join()
+      || !registered.allFrames) {
       await chrome.scripting.updateContentScripts([script]);
     }
   } else {
@@ -55,12 +84,12 @@ async function registerFor(sites) {
 
 async function injectOpenTabs(sites) {
   if (!sites.length) return [];
-  const tabs = await chrome.tabs.query({ url: matchPatterns(sites) });
+  const tabs = await chrome.tabs.query({ url: sites.map(id => siteFor(id).pattern) });
   const eligible = tabs.filter(tab => !tab.discarded && sites.includes(siteFor(tab.url)?.id));
   return Promise.all(eligible.map(async tab => {
     try {
       await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
+        target: { tabId: tab.id, allFrames: true },
         files: contentFiles,
         injectImmediately: true
       });
@@ -80,6 +109,21 @@ async function restoreRegistration(activateOpenTabs) {
   }));
   const sites = accessible.filter(Boolean);
   if (sites.length !== stored.length) await chrome.storage.local.set({ [siteKey]: sites });
+  const frames = await embeddedFrames();
+  const grantedFrames = {};
+  // A site toggled off with the shortcut can still have granted frame access.
+  for (const [id, patterns] of Object.entries(frames)) {
+    const site = siteFor(id);
+    if (!site || (!sites.includes(id) && !(await hasAccess(site)))) continue;
+    const granted = [];
+    for (const pattern of patterns) {
+      if (await chrome.permissions.contains({ origins: [pattern] })) granted.push(pattern);
+    }
+    if (granted.length) grantedFrames[id] = granted;
+  }
+  if (JSON.stringify(grantedFrames) !== JSON.stringify(frames)) {
+    await chrome.storage.local.set({ [embeddedKey]: grantedFrames });
+  }
   await registerFor(sites);
   if (activateOpenTabs) await injectOpenTabs(sites);
 }
@@ -104,28 +148,43 @@ async function changeSite(message) {
   const site = siteFor(message.site);
   if (!site || site.id !== message.site) throw new Error("This page cannot be enabled.");
   const stored = await enabledSites();
+  const frames = await embeddedFrames();
   if (!message.enabled) {
     await pendingAccess.remove(enableRequestPrefix + site.id);
     const remaining = stored.filter(id => id !== site.id);
-    await chrome.storage.local.set({ [siteKey]: remaining });
+    const { [site.id]: released = [], ...remainingFrames } = frames;
+    await chrome.storage.local.set({
+      [siteKey]: remaining,
+      [embeddedKey]: message.keepAccess ? frames : remainingFrames
+    });
     try {
       await registerFor(remaining);
     } finally {
-      if (!message.keepAccess && !remaining.some(id => siteFor(id).pattern === site.pattern)) {
-        await chrome.permissions.remove({ origins: [site.pattern] }).catch(error => {
-          console.warn("Zero Notes could not release site access:", error.message);
-        });
+      if (!message.keepAccess) {
+        const kept = new Set(await matchPatterns([...remaining, ...Object.keys(remainingFrames)]));
+        const unused = [site.pattern, ...released].filter(pattern => !kept.has(pattern));
+        if (unused.length) {
+          await chrome.permissions.remove({ origins: unused }).catch(error => {
+            console.warn("Zero Notes could not release site access:", error.message);
+          });
+        }
       }
     }
     return {};
   }
 
-  if (!(await hasAccess(site))) throw new Error("Chrome hasn’t granted access to this site.");
+  const requested = validFramePatterns(site, message.frames);
+  if (!(await hasAccess(site, requested))) throw new Error("Chrome hasn’t granted access to this site.");
   const next = [...new Set([...stored, site.id])];
-  await registerFor(next);
+  const nextFrames = requested.length
+    ? { ...frames, [site.id]: [...new Set([...(frames[site.id] || []), ...requested])] }
+    : frames;
+  await chrome.storage.local.set({ [embeddedKey]: nextFrames });
   try {
+    await registerFor(next);
     await chrome.storage.local.set({ [siteKey]: next });
   } catch (error) {
+    await chrome.storage.local.set({ [embeddedKey]: frames });
     await registerFor(stored);
     throw error;
   }
@@ -141,7 +200,7 @@ async function enableGrantedSites() {
     const site = siteFor(request?.site);
     if (!site || key !== enableRequestPrefix + site.id || !(request.expires > Date.now())) {
       await pendingAccess.remove(key);
-    } else if (!request.result && await hasAccess(site)) {
+    } else if (!request.result && await hasAccess(site, validFramePatterns(site, request.frames))) {
       const result = await changeSite({ ...request, enabled: true });
       await pendingAccess.set({ [key]: { ...request, result } });
     }
@@ -155,8 +214,11 @@ async function requestSiteEnable(message) {
   }
   const key = enableRequestPrefix + site.id;
   if (message.type === "prepare-site-enable") {
-    if (await hasAccess(site)) return { ...await changeSite({ ...message, enabled: true }), enabled: true };
-    const request = { site: site.id, tabId: message.tabId, requestId: message.requestId, expires: Date.now() + 5 * 60_000 };
+    const frames = validFramePatterns(site, message.frames);
+    if (await hasAccess(site, frames)) return { ...await changeSite({ ...message, enabled: true }), enabled: true };
+    const request = {
+      site: site.id, frames, tabId: message.tabId, requestId: message.requestId, expires: Date.now() + 5 * 60_000
+    };
     await pendingAccess.set({ [key]: request });
     return { pending: true };
   }
@@ -203,20 +265,29 @@ chrome.commands.onCommand.addListener((command, tab) => {
 });
 
 async function writeNotes(message, sender) {
-  const site = siteFor(sender.url);
   const url = pageUrl(message.url);
-  if (!site || !url || sender.frameId !== 0 || siteFor(url)?.id !== site.id
-    || !(await enabledSites()).includes(site.id)) {
-    throw new Error("Zero Notes is disabled here.");
+  let frame = null;
+  if (sender.frameId === 0) {
+    const site = siteFor(sender.url);
+    if (!site || !url || siteFor(url)?.id !== site.id || !(await enabledSites()).includes(site.id)) {
+      throw new Error("Zero Notes is disabled here.");
+    }
+  } else {
+    const context = await frameContext(sender);
+    if (!context || context.url !== url) throw new Error("Zero Notes is disabled here.");
+    frame = context.frame;
   }
   if (!Number.isSafeInteger(message.revision) || !Array.isArray(message.notes)) {
     throw new Error("Invalid notes update.");
   }
 
+  // Each frame of a page owns its own notes within the page's record.
   const key = noteKey(url);
   const current = noteRecord((await chrome.storage.local.get(key))[key]);
   if (current.revision !== message.revision) return { current };
-  const record = { revision: current.revision + 1, notes: message.notes };
+  const others = current.notes.filter(note => (note?.frame ?? null) !== frame);
+  const own = message.notes.map(({ frame: _, ...note }) => frame ? { ...note, frame } : note);
+  const record = { revision: current.revision + 1, notes: [...others, ...own] };
   const title = (typeof message.title === "string" ? message.title.trim().slice(0, 250) : "")
     || (typeof current.title === "string" ? current.title : "");
   if (record.notes.length && title) record.title = title;
@@ -304,6 +375,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     task = () => deleteSiteNotes(message);
   } else if (message?.type === "write-notes" && sender.tab) {
     task = () => writeNotes(message, sender);
+  } else if (message?.type === "frame-context" && sender.tab && sender.frameId !== 0) {
+    task = () => frameContext(sender).then(context => context ?? {});
   } else {
     return false;
   }

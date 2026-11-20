@@ -1,4 +1,4 @@
-const { isNoteKey, notesForSite, pageUrl, savedPages, siteFor, siteKey } = LocalTextNotesSites;
+const { embeddedKey, isNoteKey, notesForSite, pageUrl, savedPages, siteFor, siteKey } = LocalTextNotesSites;
 const search = document.querySelector("#search");
 const list = document.querySelector("#pages");
 const pageTemplate = document.querySelector("#page-row");
@@ -19,6 +19,7 @@ let pagesLoaded = false;
 let pagesVersion = 0;
 let currentPage;
 let site;
+let frames = [];
 let enabled = false;
 
 function setStatus(message = "") {
@@ -231,19 +232,42 @@ function renderSiteAccess() {
   siteToggle.toggleAttribute("data-enable", !enabled);
 }
 
+// Pages like claude.ai artifacts show their content in a large cross-origin frame. Notes only work
+// there when the frame's origin is enabled alongside the site.
+async function embeddedFramePatterns(tabId) {
+  try {
+    const [{ result = [] } = {}] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => [...document.querySelectorAll("iframe")].filter(frame => {
+        const box = frame.getBoundingClientRect();
+        return box.width * box.height >= innerWidth * innerHeight / 4;
+      }).map(frame => frame.src)
+    });
+    const patterns = result.map(src => siteFor(src)).filter(frame => frame && frame.id !== "file:///")
+      .map(frame => frame.pattern).filter(pattern => pattern !== site.pattern);
+    return [...new Set(patterns)];
+  } catch {
+    return [];
+  }
+}
+
 async function refreshSiteAccess() {
-  const stored = await chrome.storage.local.get(siteKey);
+  const stored = await chrome.storage.local.get([siteKey, embeddedKey]);
+  const enabledFrames = stored[embeddedKey]?.[site.id] ?? [];
   enabled = Boolean(stored[siteKey]?.includes(site.id))
-    && await chrome.permissions.contains({ origins: [site.pattern] });
+    && frames.every(pattern => enabledFrames.includes(pattern))
+    && await chrome.permissions.contains({ origins: [site.pattern, ...frames] });
   renderSiteAccess();
 }
 
 async function enableSite(tabId) {
-  const request = { site: site.id, tabId, requestId: crypto.randomUUID() };
+  const request = { site: site.id, frames, tabId, requestId: crypto.randomUUID() };
   // Send the intent before invoking the prompt, while the button's user gesture is active.
   const intent = send({ type: "prepare-site-enable", ...request });
   try {
-    const [prepared, granted] = await Promise.all([intent, chrome.permissions.request({ origins: [site.pattern] })]);
+    const [prepared, granted] = await Promise.all([
+      intent, chrome.permissions.request({ origins: [site.pattern, ...frames] })
+    ]);
     if (!granted) {
       await send({ type: "cancel-site-enable", ...request });
       return { declined: true };
@@ -276,6 +300,7 @@ async function startSitePanel() {
     return;
   }
 
+  frames = await embeddedFramePatterns(tab.id);
   await refreshSiteAccess();
   setStatus();
   siteToggle.hidden = false;
@@ -332,7 +357,7 @@ cliButton.addEventListener("click", async () => {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   if (Object.keys(changes).some(isNoteKey)) void refreshPages();
-  if (siteKey in changes && !siteToggle.hidden && !siteToggle.disabled) {
+  if ((siteKey in changes || embeddedKey in changes) && !siteToggle.hidden && !siteToggle.disabled) {
     void refreshSiteAccess().catch(() => {});
   }
 });

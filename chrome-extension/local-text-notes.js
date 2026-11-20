@@ -1299,6 +1299,17 @@
       return control;
     }
 
+    const submitKey = /Mac|iPhone|iPad/u.test(navigator.platform) ? "⌘ Enter" : "Ctrl+Enter";
+
+    function submitWithShortcut(form, submit) {
+      submit.title = submitKey;
+      form.addEventListener("keydown", event => {
+        if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey) || event.isComposing || event.defaultPrevented) return;
+        event.preventDefault();
+        if (!submit.disabled) form.requestSubmit(submit);
+      });
+    }
+
     function commentBody(noteId, comment) {
       const key = `edit-${comment.id}`;
       const fieldKey = `edit-field-${comment.id}`;
@@ -1354,6 +1365,7 @@
         if (finished) commentEdits.delete(comment.id);
         render(finished && open && view === noteId ? key : undefined);
       });
+      submitWithShortcut(form, save);
       form.append(input, actions);
       return form;
     }
@@ -1433,6 +1445,7 @@
         queueLayout();
       });
       form.addEventListener("submit", postComment);
+      submitWithShortcut(form, submit);
       form.append(input, submit);
       thread.append(form);
     }

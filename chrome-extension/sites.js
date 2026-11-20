@@ -34,6 +34,20 @@ globalThis.LocalTextNotesSites = (() => {
     return url.href;
   }
 
+  // Embedded frames (such as claude.ai artifacts) often carry session tokens in their query,
+  // so a frame is identified by its origin and path only.
+  function frameId(value) {
+    const url = parseUrl(value);
+    if (!url || (url.protocol !== "https:" && url.protocol !== "http:")) return null;
+    return url.origin + url.pathname;
+  }
+
+  function notesInFrame(notes, frame) {
+    return (Array.isArray(notes) ? notes : [])
+      .filter(note => (note?.frame ?? null) === (frame ?? null))
+      .map(({ frame: _, ...note }) => note);
+  }
+
   function noteKey(url) {
     return `${noteKeyPrefix}${url}`;
   }
@@ -81,5 +95,8 @@ globalThis.LocalTextNotesSites = (() => {
     if (keys.length) await chrome.storage.local.remove(keys);
   }
 
-  return { siteFor, pageUrl, noteKey, isNoteKey, noteRecord, savedPages, notesForSite, removeNotesForSite, siteKey: "enabledSites" };
+  return {
+    siteFor, pageUrl, frameId, notesInFrame, noteKey, isNoteKey, noteRecord, savedPages, notesForSite, removeNotesForSite,
+    siteKey: "enabledSites", embeddedKey: "embeddedFrames"
+  };
 })();
